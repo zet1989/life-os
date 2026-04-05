@@ -197,7 +197,8 @@ async def _process_workout(message: Message, user_id: int, text: str) -> None:
         json_data=json_data,
     )
 
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    display_text = _format_workout_response(result, json_data)
+    await safe_answer(message, display_text, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -230,6 +231,44 @@ def _format_meal_response(raw_result: str, json_data: dict | None) -> str:
     comment = re.sub(r'```json\s*\{[^}]*\}\s*```', '', raw_result).strip()
     if comment:
         pretty += f"\n\n{comment}"
+    return pretty
+
+
+def _format_workout_response(raw_result: str, json_data: dict | None) -> str:
+    """Формируем красивый ответ из JSON тренировки + комментарий LLM."""
+    if not json_data or "exercises" not in json_data:
+        # Убираем JSON-блок если он есть, но не распарсился как ожидалось
+        cleaned = re.sub(r'```json\s*.*?\s*```', '', raw_result, flags=re.DOTALL).strip()
+        return cleaned or raw_result
+
+    workout_type = {"strength": "💪 Силовая", "cardio": "🏃 Кардио", "flexibility": "🧘 Растяжка", "mixed": "🔄 Смешанная"}.get(
+        json_data.get("type", ""), "🏋️ Тренировка"
+    )
+    duration = json_data.get("duration_min")
+    pretty = f"{workout_type}"
+    if duration:
+        pretty += f" — {duration} мин"
+    pretty += "\n\n"
+
+    for ex in json_data["exercises"]:
+        name = ex.get("name", "Упражнение")
+        parts = []
+        if ex.get("sets"):
+            parts.append(f"{ex['sets']}×{ex.get('reps', '?')}")
+        if ex.get("weight_kg"):
+            parts.append(f"{ex['weight_kg']} кг")
+        if ex.get("duration_min"):
+            parts.append(f"{ex['duration_min']} мин")
+        detail = ", ".join(parts)
+        pretty += f"▪️ <b>{name}</b>"
+        if detail:
+            pretty += f" — {detail}"
+        pretty += "\n"
+
+    # Комментарий LLM
+    comment = re.sub(r'```json\s*.*?\s*```', '', raw_result, flags=re.DOTALL).strip()
+    if comment:
+        pretty += f"\n{comment}"
     return pretty
 
 
