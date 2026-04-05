@@ -1,6 +1,7 @@
 """Хэндлеры бота Assets — AI-Прораб (дом) и AI-Механик (авто)."""
 
 import json
+import re
 
 import structlog
 from aiogram import Bot, F, Router
@@ -22,6 +23,7 @@ from src.bots.assets.keyboard import (
     set_user_mode,
 )
 from src.bots.assets.prompts import (
+    BLUEPRINT_PROMPT,
     FOREMAN_SYSTEM,
     MECHANIC_SYSTEM,
     ORDER_OCR_PROMPT,
@@ -68,6 +70,12 @@ _MODE_CONFIG: dict[Mode, dict] = {
         "event_type": "auto_maintenance",
         "task_type": "rag_answer",
     },
+    Mode.BLUEPRINT: {
+        "system": FOREMAN_SYSTEM,
+        "event_type": "measurement",
+        "task_type": "blueprint",
+        "photo_prompt": BLUEPRINT_PROMPT,
+    },
 }
 
 
@@ -99,7 +107,8 @@ async def cmd_start(message: Message, db_user: dict) -> None:
         f"Я помогаю с домом и автомобилем.\n\n"
         f"📐 Замер — надиктуй или напиши замеры комнат\n"
         f"🧾 Чек — отправь фото чека из строймага\n"
-        f"🔧 ТО — запиши в бортжурнал авто\n"
+        f"� План дома — отправь фото чертежа/плана\n"
+        f"�🔧 ТО — запиши в бортжурнал авто\n"
         f"⚙️ Запчасть — фото упаковки или заказ-наряда\n"
         f"❓ Спросить — найду в базе знаний",
         reply_markup=main_keyboard(),
@@ -156,6 +165,17 @@ async def mode_question(message: Message) -> None:
     )
 
 
+@router.message(F.text == "🗓 План дома")
+async def mode_blueprint(message: Message) -> None:
+    set_user_mode(message.from_user.id, Mode.BLUEPRINT)  # type: ignore[union-attr]
+    await message.answer(
+        "🗓 Режим <b>План дома</b>.\n"
+        "Отправь фото чертежа, плана или схемы помещения.\n"
+        "Я проанализирую и сохраню в базу знаний.",
+        reply_markup=main_keyboard(),
+    )
+
+
 # === Inline callback: переключение режима ===
 
 @router.callback_query(F.data.startswith("asset_mode:"))
@@ -192,6 +212,9 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
     elif mode == Mode.MAINTENANCE:
         prompt = ORDER_OCR_PROMPT
         task = "order_ocr"
+    elif mode == Mode.BLUEPRINT:
+        prompt = BLUEPRINT_PROMPT
+        task = "blueprint"
     else:
         # По умолчанию — чек (самый частый кейс для фото)
         prompt = RECEIPT_OCR_PROMPT
@@ -240,7 +263,7 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
     await store_event_embedding(event["id"], result, user_id=user_id, bot_source=BOT_SOURCE)
 
     await processing.delete()
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    await safe_answer(message, _strip_json_block(result), reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -324,7 +347,7 @@ async def _process_text(message: Message, user_id: int, text: str, mode: Mode) -
                 source_event_id=event["id"],
             )
 
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    await safe_answer(message, _strip_json_block(result), reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -356,6 +379,12 @@ async def _process_question(message: Message, user_id: int, query: str) -> None:
 
     await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
+
+
+def _strip_json_block(text: str) -> str:
+    """Убрать JSON-блоки из текста для пользователя. JSON сохраняется в БД, но не показывается."""
+    cleaned = re.sub(r'```json\s*.*?\s*```', '', text, flags=re.DOTALL).strip()
+    return cleaned if cleaned else text
 
 
 def _extract_json(text: str) -> dict | None:

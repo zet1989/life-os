@@ -19,6 +19,7 @@ class Mode(StrEnum):
     MAINTENANCE = "maintenance"  # ТО / бортжурнал
     PART = "part"                # запчасть / заказ-наряд
     QUESTION = "question"        # RAG-запрос
+    BLUEPRINT = "blueprint"      # план/чертёж дома
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -27,7 +28,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📐 Замер"), KeyboardButton(text="🧾 Чек")],
             [KeyboardButton(text="🔧 ТО"), KeyboardButton(text="⚙️ Запчасть")],
-            [KeyboardButton(text="❓ Спросить")],
+            [KeyboardButton(text="🗓 План дома"), KeyboardButton(text="❓ Спросить")],
         ],
         resize_keyboard=True,
     )
