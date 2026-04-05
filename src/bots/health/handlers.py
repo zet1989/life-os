@@ -1,6 +1,7 @@
 """Хэндлеры бота Health — питание, тренировки, настройки."""
 
 import json
+import re
 
 import structlog
 from aiogram import Bot, F, Router
@@ -110,8 +111,10 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
         media_url=None,  # URL уже в Storage
     )
 
+    display_text = _format_meal_response(result, json_data)
+
     await processing.delete()
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    await safe_answer(message, display_text, reply_markup=main_keyboard())
 
     # Сохраняем в историю диалога
     await save_assistant_reply(user_id, BOT_SOURCE, result)
@@ -175,7 +178,8 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
         json_data=json_data,
     )
 
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    display_text = _format_meal_response(result, json_data)
+    await safe_answer(message, display_text, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -207,6 +211,26 @@ async def _process_settings(message: Message, user_id: int, text: str) -> None:
         f"<i>{text}</i>",
         reply_markup=main_keyboard(),
     )
+
+
+def _format_meal_response(raw_result: str, json_data: dict | None) -> str:
+    """Формируем красивый ответ из КБЖУ JSON + комментарий LLM."""
+    if not json_data or "calories" not in json_data:
+        return raw_result
+
+    desc = json_data.get("description", "Блюдо")
+    pretty = (
+        f"🍽 <b>{desc}</b>\n\n"
+        f"🔥 Калории: <b>{json_data['calories']}</b> ккал\n"
+        f"🥩 Белки: <b>{json_data.get('protein', '?')}</b> г\n"
+        f"🧈 Жиры: <b>{json_data.get('fat', '?')}</b> г\n"
+        f"🍞 Углеводы: <b>{json_data.get('carbs', '?')}</b> г"
+    )
+    # Убираем JSON-блок, оставляем комментарий LLM
+    comment = re.sub(r'```json\s*\{[^}]*\}\s*```', '', raw_result).strip()
+    if comment:
+        pretty += f"\n\n{comment}"
+    return pretty
 
 
 def _extract_json(text: str) -> dict | None:
