@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import logging
 import signal
 
 import structlog
@@ -19,7 +20,7 @@ from src.db.postgres import close_pool, init_pool
 
 structlog.configure(
     wrapper_class=structlog.make_filtering_bound_logger(
-        structlog.get_level_from_name(settings.log_level),
+        logging.getLevelName(settings.log_level.upper()),
     ),
 )
 logger = structlog.get_logger()
