@@ -1,6 +1,7 @@
 """Генерация эмбеддингов через OpenAI text-embedding-3-small.
 
 Размерность: 1536. Используется для RAG-поиска по pgvector.
+При отсутствии OPENAI_API_KEY — возвращает None (graceful degradation).
 """
 
 import structlog
@@ -15,6 +16,11 @@ logger = structlog.get_logger()
 _client: AsyncOpenAI | None = None
 
 
+def _is_available() -> bool:
+    """Проверить, доступен ли OpenAI API ключ для эмбеддингов."""
+    return bool(settings.openai_api_key)
+
+
 def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
@@ -27,11 +33,15 @@ async def generate_embedding(
     text: str,
     user_id: int | None = None,
     bot_source: str | None = None,
-) -> list[float]:
+) -> list[float] | None:
     """Сгенерировать вектор эмбеддинга для текста.
 
-    Возвращает list[float] длиной 1536.
+    Возвращает list[float] длиной 1536 или None если API ключ не задан.
     """
+    if not _is_available():
+        logger.warning("embedding_skipped", reason="no_openai_api_key")
+        return None
+
     response = await _get_client().embeddings.create(
         model="text-embedding-3-small",
         input=text,
