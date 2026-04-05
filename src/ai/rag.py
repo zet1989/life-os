@@ -20,8 +20,6 @@ async def store_event_embedding(
 ) -> None:
     """Сгенерировать эмбеддинг и сохранить в поле embedding таблицы events."""
     embedding = await generate_embedding(text, user_id=user_id, bot_source=bot_source)
-    if embedding is None:
-        return
     await update_event_embedding(event_id, embedding)
     logger.info("event_embedding_stored", event_id=event_id)
 
@@ -35,9 +33,6 @@ async def search(
 ) -> list[dict]:
     """Семантический поиск по событиям пользователя."""
     embedding = await generate_embedding(query, user_id=user_id, bot_source=bot_source)
-    if embedding is None:
-        logger.warning("rag_search_skipped", reason="no_embedding")
-        return []
     results = await match_events(embedding, user_id, match_count=top_k, project_id=project_id)
     logger.info("rag_search", query=query[:50], results=len(results))
     return results
