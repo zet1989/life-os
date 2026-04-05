@@ -196,6 +196,15 @@ async def mode_projects(message: Message, db_user: dict) -> None:
     await message.answer(text, reply_markup=main_keyboard())
 
 
+@router.message(F.text == "➕ Новый проект")
+async def mode_add_project(message: Message, db_user: dict) -> None:
+    set_user_mode(message.from_user.id, Mode.ADD_PROJECT)  # type: ignore[union-attr]
+    await message.answer(
+        "✏️ Напиши название нового партнёрского проекта:",
+        reply_markup=main_keyboard(),
+    )
+
+
 @router.message(F.text == "📊 Отчёт")
 async def mode_report(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
@@ -377,6 +386,19 @@ async def handle_text(message: Message, bot: Bot, db_user: dict) -> None:
 
 async def _process_input(message: Message, user_id: int, text: str) -> None:
     mode = get_user_mode(user_id)
+
+    if mode == Mode.ADD_PROJECT:
+        name = text.strip()
+        if not name:
+            await message.answer("Название не может быть пустым.", reply_markup=main_keyboard())
+            return
+        project = await create_project(user_id, name, project_type="partnership")
+        set_user_mode(user_id, Mode.EXPENSE)
+        await message.answer(
+            f"✅ Партнёрский проект <b>{project['name']}</b> создан (ID: {project['project_id']}).",
+            reply_markup=main_keyboard(),
+        )
+        return
 
     if mode == Mode.PROJECTS:
         # Свободный текст в режиме проектов — игнорируем

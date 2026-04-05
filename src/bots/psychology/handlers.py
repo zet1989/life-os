@@ -125,6 +125,15 @@ async def mode_retro(message: Message, db_user: dict) -> None:
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
+@router.message(F.text == "➕ Привычка")
+async def mode_add_habit(message: Message, db_user: dict) -> None:
+    set_user_mode(message.from_user.id, Mode.ADD_HABIT)  # type: ignore[union-attr]
+    await message.answer(
+        "✏️ Напиши название новой привычки:",
+        reply_markup=main_keyboard(),
+    )
+
+
 # === /add_habit ===
 
 @router.message(Command("add_habit"))
@@ -271,6 +280,24 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
 async def handle_text(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     text = message.text or ""
+
+    # Режим «Новая привычка» — создаём привычку из текста
+    if get_user_mode(user_id) == Mode.ADD_HABIT:
+        from src.db.queries import create_goal
+
+        name = text.strip()
+        if not name:
+            await message.answer("Название не может быть пустым.", reply_markup=main_keyboard())
+            return
+        await create_goal(user_id=user_id, goal_type="habit_target", title=name)
+        set_user_mode(user_id, Mode.DIARY)
+        await message.answer(
+            f"✅ Привычка добавлена: <b>{name}</b>\n"
+            f"Теперь отмечай прогресс через кнопку «✅ Привычки».",
+            reply_markup=main_keyboard(),
+        )
+        return
+
     await _process_diary(message, user_id, text)
 
 

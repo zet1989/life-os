@@ -20,6 +20,7 @@ class Mode(StrEnum):
     INCOME = "income"
     PROJECTS = "projects"
     REPORT = "report"
+    ADD_PROJECT = "add_project"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -27,6 +28,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📉 Расход"), KeyboardButton(text="📈 Доход")],
             [KeyboardButton(text="📁 Проекты"), KeyboardButton(text="📊 Отчёт")],
+            [KeyboardButton(text="➕ Новый проект")],
         ],
         resize_keyboard=True,
     )

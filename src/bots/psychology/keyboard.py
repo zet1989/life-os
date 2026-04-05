@@ -15,6 +15,7 @@ class Mode(str, Enum):
     HABITS = "habits"
     RETRO = "retro"
     MOOD = "mood"
+    ADD_HABIT = "add_habit"
 
 
 # user_id → текущий режим
@@ -34,7 +35,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="🎙 Голос")],
             [KeyboardButton(text="✅ Привычки"), KeyboardButton(text="😊 Настроение")],
-            [KeyboardButton(text="🔮 Ретроспектива")],
+            [KeyboardButton(text="🔮 Ретроспектива"), KeyboardButton(text="➕ Привычка")],
         ],
         resize_keyboard=True,
     )

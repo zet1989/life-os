@@ -30,12 +30,13 @@ def set_user_mode(user_id: int, mode: Mode) -> None:
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
-    """Reply-клавиатура из ТЗ: Дневник, Цели, Проекты, Отчёт."""
+    """Главная клавиатура Master-бота."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="🎯 Цели и Мечты")],
             [KeyboardButton(text="⚙️ Проекты"), KeyboardButton(text="📊 Сводный отчёт")],
             [KeyboardButton(text="💰 Финансовая панорама")],
+            [KeyboardButton(text="➕ Цель"), KeyboardButton(text="📊 Графики"), KeyboardButton(text="ℹ️ Статус")],
         ],
         resize_keyboard=True,
     )

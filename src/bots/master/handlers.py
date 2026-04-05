@@ -196,6 +196,29 @@ def _progress_bar(pct: int, length: int = 10) -> str:
     return "▓" * filled + "░" * (length - filled)
 
 
+# === Кнопки быстрого доступа ===
+
+@router.message(F.text == "➕ Цель")
+async def btn_add_goal(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.GOALS)
+    await message.answer(
+        "✏️ Напиши цель или мечту — я добавлю.\n\n"
+        "Пример: <i>Мечта: объездить 30 стран до 40 лет</i>",
+        reply_markup=main_keyboard(),
+    )
+
+
+@router.message(F.text == "📊 Графики")
+async def btn_charts(message: Message, db_user: dict) -> None:
+    await cmd_charts(message, db_user)
+
+
+@router.message(F.text == "ℹ️ Статус")
+async def btn_status(message: Message, db_user: dict) -> None:
+    await cmd_status(message, db_user)
+
+
 # === Проекты ===
 
 @router.message(F.text == "⚙️ Проекты")
