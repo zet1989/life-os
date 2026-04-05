@@ -330,14 +330,25 @@ async def _process_text(message: Message, user_id: int, text: str, mode: Mode) -
 
 async def _process_question(message: Message, user_id: int, query: str) -> None:
     """RAG-поиск по замерам, бортжурналу, запчастям."""
-    # Ищем в обоих проектах — house и auto
+    # Сохраняем сообщение как событие + embedding для будущих поисков
+    event = await create_event(
+        user_id=user_id,
+        event_type="auto_maintenance",
+        bot_source=BOT_SOURCE,
+        raw_text=query,
+    )
+    await store_event_embedding(event["id"], query, user_id=user_id, bot_source=BOT_SOURCE)
+
+    # RAG-поиск с полным контекстом об активах
     result = await rag_answer(
         query=query,
         user_id=user_id,
         system_prompt=(
-            "Ты ассистент по дому и автомобилю. "
-            "Отвечай на вопрос пользователя на основании контекста из базы знаний. "
-            "Если данных недостаточно — скажи об этом."
+            "Ты — ассистент по дому и автомобилю пользователя.\n\n"
+            f"Контекст об автомобиле:\n{MECHANIC_SYSTEM}\n\n"
+            f"Контекст о доме:\n{FOREMAN_SYSTEM}\n\n"
+            "Отвечай на вопрос пользователя, используя контекст из базы знаний "
+            "и свои знания об его активах. Отвечай на русском."
         ),
         top_k=5,
         bot_source=BOT_SOURCE,
