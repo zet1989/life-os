@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # --- AI APIs ---
     openrouter_api_key: str
-    openai_api_key: str
+    openai_api_key: str = ""        # опционально, нужен только для Whisper/embeddings
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
