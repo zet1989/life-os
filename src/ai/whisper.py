@@ -1,44 +1,40 @@
-"""Транскрипция голосовых сообщений через Groq Whisper API."""
+"""Транскрипция голосовых сообщений через локальный faster-whisper."""
 
+import asyncio
 import tempfile
 from pathlib import Path
 
 import structlog
 from aiogram import Bot
 from aiogram.types import Voice
-from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from faster_whisper import WhisperModel
 
-from src.config import settings
 from src.utils.cost_tracker import log_api_cost
 
 logger = structlog.get_logger()
 
-_groq_client: AsyncOpenAI | None = None
+_model: WhisperModel | None = None
 
 
-def _get_groq() -> AsyncOpenAI:
-    global _groq_client
-    if _groq_client is None:
-        _groq_client = AsyncOpenAI(
-            api_key=settings.groq_api_key,
-            base_url="https://api.groq.com/openai/v1",
-        )
-    return _groq_client
+def _get_model() -> WhisperModel:
+    global _model
+    if _model is None:
+        logger.info("whisper_loading_model", model="base")
+        _model = WhisperModel("base", device="cpu", compute_type="int8")
+        logger.info("whisper_model_ready")
+    return _model
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 async def transcribe_voice(
     bot: Bot,
     voice: Voice,
     user_id: int | None = None,
     bot_source: str | None = None,
 ) -> str:
-    """Скачать voice-сообщение из Telegram и транскрибировать через Groq Whisper.
+    """Скачать voice-сообщение из Telegram и транскрибировать локально.
 
     Возвращает текст транскрипции.
     """
-    # Скачиваем .ogg файл во временную директорию
     file = await bot.get_file(voice.file_id)
     assert file.file_path is not None
 
@@ -46,22 +42,15 @@ async def transcribe_voice(
         local_path = Path(tmp) / "voice.ogg"
         await bot.download_file(file.file_path, destination=local_path)
 
-        # Отправляем в Groq Whisper API
-        with open(local_path, "rb") as audio_file:
-            transcription = await _get_groq().audio.transcriptions.create(
-                model="whisper-large-v3",
-                file=audio_file,
-                language="ru",
-            )
+        # Запускаем в тредпуле чтобы не блокировать event loop
+        loop = asyncio.get_running_loop()
+        text = await loop.run_in_executor(None, _transcribe_sync, str(local_path))
 
-    text = transcription.text.strip()
-
-    # Логируем расход
     duration = voice.duration or 0
     await log_api_cost(
         user_id=user_id,
         bot_source=bot_source,
-        model="whisper-large-v3",
+        model="whisper-base-local",
         tokens_in=duration,
         tokens_out=0,
         task_type="transcription",
@@ -69,3 +58,10 @@ async def transcribe_voice(
 
     logger.info("whisper_transcribed", duration=duration, chars=len(text))
     return text
+
+
+def _transcribe_sync(audio_path: str) -> str:
+    """Синхронная транскрипция (вызывается в executor)."""
+    model = _get_model()
+    segments, _info = model.transcribe(audio_path, language="ru", beam_size=3)
+    return " ".join(seg.text.strip() for seg in segments).strip()

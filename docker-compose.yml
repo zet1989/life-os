@@ -12,6 +12,7 @@ services:
         condition: service_started
     volumes:
       - media_data:/app/media
+      - whisper_cache:/root/.cache/huggingface
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8443/status')"]
       interval: 30s
@@ -60,3 +61,4 @@ volumes:
   pg_data:
   redis_data:
   media_data:
+  whisper_cache:
