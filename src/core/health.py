@@ -8,18 +8,19 @@ logger = structlog.get_logger()
 async def get_status() -> dict:
     """Проверить доступность зависимостей."""
     checks = {
-        "supabase": False,
+        "postgres": False,
         "redis": False,
     }
     ok = True
 
-    # Supabase
+    # PostgreSQL
     try:
-        from src.db.supabase_client import get_supabase
-        result = get_supabase().table("users").select("user_id").limit(1).execute()
-        checks["supabase"] = True
+        from src.db.postgres import get_pool
+        pool = get_pool()
+        val = await pool.fetchval("SELECT 1")
+        checks["postgres"] = val == 1
     except Exception as e:
-        logger.warning("health_check_supabase_fail", error=str(e))
+        logger.warning("health_check_postgres_fail", error=str(e))
         ok = False
 
     # Redis

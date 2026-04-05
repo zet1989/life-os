@@ -7,7 +7,7 @@
 import structlog
 
 from src.ai.embeddings import generate_embedding
-from src.db.supabase_client import get_supabase
+from src.db.queries import match_events, update_event_embedding
 
 logger = structlog.get_logger()
 
@@ -20,11 +20,7 @@ async def store_event_embedding(
 ) -> None:
     """Сгенерировать эмбеддинг и сохранить в поле embedding таблицы events."""
     embedding = await generate_embedding(text, user_id=user_id, bot_source=bot_source)
-
-    get_supabase().table("events").update(
-        {"embedding": embedding}
-    ).eq("id", event_id).execute()
-
+    await update_event_embedding(event_id, embedding)
     logger.info("event_embedding_stored", event_id=event_id)
 
 
@@ -35,25 +31,11 @@ async def search(
     project_id: int | None = None,
     bot_source: str | None = None,
 ) -> list[dict]:
-    """Семантический поиск по событиям пользователя.
-
-    Использует Supabase RPC функцию match_events (нужно создать в БД).
-    Фильтрует по user_id (ACL) и опционально по project_id.
-    """
+    """Семантический поиск по событиям пользователя."""
     embedding = await generate_embedding(query, user_id=user_id, bot_source=bot_source)
-
-    params: dict = {
-        "query_embedding": embedding,
-        "match_count": top_k,
-        "p_user_id": user_id,
-    }
-    if project_id is not None:
-        params["p_project_id"] = project_id
-
-    result = get_supabase().rpc("match_events", params).execute()
-
-    logger.info("rag_search", query=query[:50], results=len(result.data))
-    return result.data
+    results = await match_events(embedding, user_id, match_count=top_k, project_id=project_id)
+    logger.info("rag_search", query=query[:50], results=len(results))
+    return results
 
 
 async def rag_answer(

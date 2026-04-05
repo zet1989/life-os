@@ -24,9 +24,8 @@ class Settings(BaseSettings):
     bot_token_psychology: str = ""
     bot_token_master: str = ""
 
-    # --- Supabase ---
-    supabase_url: str
-    supabase_key: str
+    # --- PostgreSQL ---
+    database_url: str = "postgresql://lifeos:lifeos@postgres:5432/lifeos"
 
     # --- AI APIs ---
     openrouter_api_key: str

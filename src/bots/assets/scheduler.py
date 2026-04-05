@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from src.ai.router import chat
-from src.db.supabase_client import get_client
+from src.db.queries import get_active_user_ids, get_recent_events
 
 logger = structlog.get_logger()
 
@@ -35,45 +35,30 @@ CHECK_PROMPT = (
 async def check_mileage_reminders(bot: Bot) -> None:
     """Проверить бортжурнал и отправить напоминания, если ТО просрочено."""
     try:
-        supabase = get_client()
+        user_ids = await get_active_user_ids()
 
-        # Получаем активных юзеров
-        users_resp = (
-            supabase.table("users")
-            .select("telegram_id")
-            .eq("is_active", True)
-            .execute()
-        )
-
-        for user in users_resp.data or []:
-            uid = user["telegram_id"]
-            await _check_for_user(bot, supabase, uid)
+        for uid in user_ids:
+            await _check_for_user(bot, uid)
 
     except Exception:
         logger.exception("mileage_check_failed")
 
 
-async def _check_for_user(bot: Bot, supabase, user_id: int) -> None:
+async def _check_for_user(bot: Bot, user_id: int) -> None:
     """Проверка для одного юзера."""
     try:
-        # Последние записи бортжурнала
-        resp = (
-            supabase.table("events")
-            .select("raw_text, json_data, created_at")
-            .eq("user_id", user_id)
-            .eq("event_type", "auto_maintenance")
-            .eq("bot_source", "assets")
-            .order("created_at", desc=True)
-            .limit(20)
-            .execute()
+        records = await get_recent_events(
+            user_id=user_id,
+            event_type="auto_maintenance",
+            bot_source="assets",
+            limit=20,
         )
-        records = resp.data or []
         if not records:
             return
 
         # Собираем текст бортжурнала
         journal = "\n".join(
-            f"[{r.get('created_at', '')}] {r.get('raw_text', '')}" for r in records
+            f"[{r.get('timestamp', '')}] {r.get('raw_text', '')}" for r in records
         )
 
         intervals_text = "\n".join(

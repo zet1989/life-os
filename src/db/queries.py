@@ -1,4 +1,4 @@
-"""SQL-запросы к Supabase — базовые CRUD операции.
+"""SQL-запросы к PostgreSQL — базовые CRUD операции.
 
 Все запросы фильтруются по user_id (ACL).
 Финансы считаются ТОЛЬКО через SQL, НИКОГДА через LLM.
@@ -7,36 +7,47 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from src.db.supabase_client import get_supabase
+import numpy as np
+
+from src.db.postgres import get_pool
 
 
 # === Users ===
 
 async def get_user(user_id: int) -> dict | None:
     """Получить пользователя по Telegram ID."""
-    result = (
-        get_supabase()
-        .table("users")
-        .select("*")
-        .eq("user_id", user_id)
-        .maybe_single()
-        .execute()
-    )
-    return result.data
+    row = await get_pool().fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
+    return dict(row) if row else None
 
 
 async def update_last_active(user_id: int) -> None:
     """Обновить last_active_at при каждом сообщении."""
-    get_supabase().table("users").update(
-        {"last_active_at": datetime.now(timezone.utc).isoformat()}
-    ).eq("user_id", user_id).execute()
+    await get_pool().execute(
+        "UPDATE users SET last_active_at = $1 WHERE user_id = $2",
+        datetime.now(timezone.utc), user_id,
+    )
 
 
 async def update_user_settings(user_id: int, overrides: str) -> None:
     """Обновить system_prompt_overrides для конкретного юзера."""
-    get_supabase().table("users").update(
-        {"system_prompt_overrides": overrides}
-    ).eq("user_id", user_id).execute()
+    await get_pool().execute(
+        "UPDATE users SET system_prompt_overrides = $1 WHERE user_id = $2",
+        overrides, user_id,
+    )
+
+
+async def get_admin_users() -> list[dict]:
+    """Получить admin-пользователей."""
+    rows = await get_pool().fetch(
+        "SELECT user_id, display_name FROM users WHERE is_active = TRUE AND role = 'admin'"
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_active_user_ids() -> list[int]:
+    """Получить ID всех активных пользователей."""
+    rows = await get_pool().fetch("SELECT user_id FROM users WHERE is_active = TRUE")
+    return [r["user_id"] for r in rows]
 
 
 # === Events ===
@@ -51,17 +62,36 @@ async def create_event(
     project_id: int | None = None,
 ) -> dict:
     """Создать событие в единой шине данных."""
-    row: dict[str, Any] = {
-        "user_id": user_id,
-        "event_type": event_type,
-        "bot_source": bot_source,
-        "raw_text": raw_text,
-        "json_data": json_data,
-        "media_url": media_url,
-        "project_id": project_id,
-    }
-    result = get_supabase().table("events").insert(row).execute()
-    return result.data[0]
+    row = await get_pool().fetchrow(
+        """INSERT INTO events (user_id, event_type, bot_source, raw_text, json_data, media_url, project_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *""",
+        user_id, event_type, bot_source, raw_text, json_data, media_url, project_id,
+    )
+    return dict(row)
+
+
+async def update_event_embedding(event_id: int, embedding: list[float]) -> None:
+    """Сохранить вектор эмбеддинга в events."""
+    await get_pool().execute(
+        "UPDATE events SET embedding = $1 WHERE id = $2",
+        np.array(embedding, dtype=np.float32), event_id,
+    )
+
+
+async def get_recent_events(
+    user_id: int,
+    event_type: str,
+    bot_source: str,
+    limit: int = 20,
+) -> list[dict]:
+    """Последние события по типу."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM events
+           WHERE user_id = $1 AND event_type = $2 AND bot_source = $3
+           ORDER BY timestamp DESC LIMIT $4""",
+        user_id, event_type, bot_source, limit,
+    )
+    return [dict(r) for r in rows]
 
 
 # === Finances (строгая математика — SQL only) ===
@@ -77,50 +107,72 @@ async def create_finance(
     source_event_id: int | None = None,
 ) -> dict:
     """Записать финансовую транзакцию."""
-    row: dict[str, Any] = {
-        "user_id": user_id,
-        "project_id": project_id,
-        "transaction_type": transaction_type,
-        "amount": amount,
-        "category": category,
-        "description": description,
-        "receipt_url": receipt_url,
-        "source_event_id": source_event_id,
-    }
-    result = get_supabase().table("finances").insert(row).execute()
-    return result.data[0]
+    row = await get_pool().fetchrow(
+        """INSERT INTO finances (user_id, project_id, transaction_type, amount, category,
+                                 description, receipt_url, source_event_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *""",
+        user_id, project_id, transaction_type, amount, category,
+        description, receipt_url, source_event_id,
+    )
+    return dict(row)
 
 
 async def get_finance_summary(project_id: int) -> list[dict]:
-    """Сводка расходов/доходов по категориям для проекта.
-
-    Возвращает результат SQL: SUM(amount) GROUP BY category, transaction_type.
-    """
-    result = (
-        get_supabase()
-        .rpc(
-            "finance_summary",
-            {"p_project_id": project_id},
-        )
-        .execute()
+    """Сводка расходов/доходов по категориям для проекта (SQL only)."""
+    rows = await get_pool().fetch(
+        """SELECT transaction_type, category, SUM(amount)::numeric(12,2) AS total
+           FROM finances WHERE project_id = $1
+           GROUP BY transaction_type, category
+           ORDER BY transaction_type, total DESC""",
+        project_id,
     )
-    return result.data
+    return [dict(r) for r in rows]
 
 
 # === Goals ===
 
 async def get_active_goals(user_id: int) -> list[dict]:
     """Активные цели и мечты пользователя."""
-    result = (
-        get_supabase()
-        .table("goals")
-        .select("*")
-        .eq("user_id", user_id)
-        .eq("status", "active")
-        .order("created_at", desc=False)
-        .execute()
+    rows = await get_pool().fetch(
+        "SELECT * FROM goals WHERE user_id = $1 AND status = 'active' ORDER BY created_at",
+        user_id,
     )
-    return result.data
+    return [dict(r) for r in rows]
+
+
+async def create_goal(
+    user_id: int,
+    goal_type: str,
+    title: str,
+    description: str = "",
+    status: str = "active",
+) -> dict:
+    """Создать новую цель."""
+    row = await get_pool().fetchrow(
+        """INSERT INTO goals (user_id, type, title, description, status)
+           VALUES ($1, $2, $3, $4, $5) RETURNING *""",
+        user_id, goal_type, title, description, status,
+    )
+    return dict(row)
+
+
+async def update_goal(goal_id: int, user_id: int, **kwargs: Any) -> None:
+    """Обновить поля цели (ACL-filtered)."""
+    if not kwargs:
+        return
+    sets = []
+    vals: list[Any] = [goal_id, user_id]
+    for i, (k, v) in enumerate(kwargs.items(), start=3):
+        sets.append(f"{k} = ${i}")
+        vals.append(v)
+    sql = f"UPDATE goals SET {', '.join(sets)} WHERE id = $1 AND user_id = $2"
+    await get_pool().execute(sql, *vals)
+
+
+async def get_goal(goal_id: int) -> dict | None:
+    """Получить цель по ID."""
+    row = await get_pool().fetchrow("SELECT * FROM goals WHERE id = $1", goal_id)
+    return dict(row) if row else None
 
 
 # === Conversations (контекст диалога) ===
@@ -133,13 +185,11 @@ async def save_message(
     tokens_used: int | None = None,
 ) -> None:
     """Сохранить сообщение в историю диалога."""
-    get_supabase().table("conversations").insert({
-        "user_id": user_id,
-        "bot_source": bot_source,
-        "role": role,
-        "content": content,
-        "tokens_used": tokens_used,
-    }).execute()
+    await get_pool().execute(
+        """INSERT INTO conversations (user_id, bot_source, role, content, tokens_used)
+           VALUES ($1, $2, $3, $4, $5)""",
+        user_id, bot_source, role, content, tokens_used,
+    )
 
 
 async def get_recent_messages(
@@ -148,49 +198,63 @@ async def get_recent_messages(
     limit: int = 20,
 ) -> list[dict]:
     """Последние N сообщений для контекста LLM."""
-    result = (
-        get_supabase()
-        .table("conversations")
-        .select("role, content")
-        .eq("user_id", user_id)
-        .eq("bot_source", bot_source)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
+    rows = await get_pool().fetch(
+        """SELECT role, content FROM conversations
+           WHERE user_id = $1 AND bot_source = $2
+           ORDER BY created_at DESC LIMIT $3""",
+        user_id, bot_source, limit,
     )
-    # Возвращаем в хронологическом порядке (от старых к новым)
-    return list(reversed(result.data))
+    return [dict(r) for r in reversed(rows)]
 
 
 # === Projects ===
 
 async def get_user_projects(user_id: int, status: str = "active") -> list[dict]:
     """Получить проекты пользователя по статусу (только owner)."""
-    result = (
-        get_supabase()
-        .table("projects")
-        .select("*")
-        .eq("owner_id", user_id)
-        .eq("status", status)
-        .order("created_at", desc=False)
-        .execute()
+    rows = await get_pool().fetch(
+        "SELECT * FROM projects WHERE owner_id = $1 AND status = $2 ORDER BY created_at",
+        user_id, status,
     )
-    return result.data
+    return [dict(r) for r in rows]
 
 
-async def get_projects_by_type(
-    user_id: int, project_type: str,
-) -> list[dict]:
-    """Получить доступные проекты по типу (owner ИЛИ collaborator).
-
-    Использует RPC get_accessible_projects для учёта collaborators.
-    """
-    result = (
-        get_supabase()
-        .rpc("get_accessible_projects", {"p_user_id": user_id, "p_type": project_type})
-        .execute()
+async def get_projects_by_type(user_id: int, project_type: str) -> list[dict]:
+    """Получить доступные проекты по типу (owner ИЛИ collaborator)."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM projects
+           WHERE status = 'active' AND type = $2
+             AND (owner_id = $1 OR $1 = ANY(collaborators))
+           ORDER BY created_at""",
+        user_id, project_type,
     )
-    return result.data
+    return [dict(r) for r in rows]
+
+
+async def get_accessible_projects(user_id: int, project_type: str | None = None) -> list[dict]:
+    """Все доступные проекты (owner или collaborator), опционально по типу."""
+    if project_type:
+        rows = await get_pool().fetch(
+            """SELECT * FROM projects
+               WHERE status = 'active' AND type = $2
+                 AND (owner_id = $1 OR $1 = ANY(collaborators))
+               ORDER BY created_at""",
+            user_id, project_type,
+        )
+    else:
+        rows = await get_pool().fetch(
+            """SELECT * FROM projects
+               WHERE status = 'active'
+                 AND (owner_id = $1 OR $1 = ANY(collaborators))
+               ORDER BY created_at""",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def get_project(project_id: int) -> dict | None:
+    """Получить проект по ID."""
+    row = await get_pool().fetchrow("SELECT * FROM projects WHERE project_id = $1", project_id)
+    return dict(row) if row else None
 
 
 async def create_project(
@@ -201,55 +265,177 @@ async def create_project(
     metadata: dict | None = None,
 ) -> dict:
     """Создать новый проект."""
-    row: dict[str, Any] = {
-        "name": name,
-        "type": project_type,
-        "owner_id": user_id,
-        "collaborators": collaborators or [],
-        "status": "active",
-        "metadata": metadata or {},
-    }
-    result = get_supabase().table("projects").insert(row).execute()
-    return result.data[0]
+    row = await get_pool().fetchrow(
+        """INSERT INTO projects (name, type, owner_id, collaborators, status, metadata)
+           VALUES ($1, $2, $3, $4, 'active', $5) RETURNING *""",
+        name, project_type, user_id, collaborators or [], metadata or {},
+    )
+    return dict(row)
 
 
 async def archive_project(project_id: int, user_id: int) -> bool:
     """Архивировать проект (ACL: только владелец)."""
-    result = (
-        get_supabase()
-        .table("projects")
-        .update({"status": "archived"})
-        .eq("project_id", project_id)
-        .eq("owner_id", user_id)
-        .execute()
+    result = await get_pool().execute(
+        "UPDATE projects SET status = 'archived' WHERE project_id = $1 AND owner_id = $2",
+        project_id, user_id,
     )
-    return len(result.data) > 0
+    return result != "UPDATE 0"
 
 
 async def add_collaborator(project_id: int, owner_id: int, partner_id: int) -> bool:
-    """Добавить партнёра к проекту (ACL: только владелец).
-
-    Добавляет partner_id в массив collaborators.
-    """
-    # Сначала проверяем что юзер — владелец
-    proj = (
-        get_supabase()
-        .table("projects")
-        .select("collaborators")
-        .eq("project_id", project_id)
-        .eq("owner_id", owner_id)
-        .maybe_single()
-        .execute()
+    """Добавить партнёра к проекту (ACL: только владелец)."""
+    row = await get_pool().fetchrow(
+        "SELECT collaborators FROM projects WHERE project_id = $1 AND owner_id = $2",
+        project_id, owner_id,
     )
-    if not proj.data:
+    if not row:
         return False
-
-    current: list[int] = proj.data.get("collaborators") or []
+    current: list[int] = list(row["collaborators"] or [])
     if partner_id in current:
-        return True  # уже есть
-
+        return True
     current.append(partner_id)
-    get_supabase().table("projects").update(
-        {"collaborators": current}
-    ).eq("project_id", project_id).execute()
+    await get_pool().execute(
+        "UPDATE projects SET collaborators = $1 WHERE project_id = $2",
+        current, project_id,
+    )
     return True
+
+
+# === Model routing ===
+
+async def get_model_config(task_type: str) -> dict | None:
+    """Получить конфиг модели для task_type."""
+    row = await get_pool().fetchrow(
+        "SELECT * FROM model_routing WHERE task_type = $1", task_type,
+    )
+    return dict(row) if row else None
+
+
+# === API Costs ===
+
+async def insert_api_cost(
+    user_id: int | None,
+    bot_source: str | None,
+    model: str,
+    tokens_in: int,
+    tokens_out: int,
+    cost_usd: float,
+    task_type: str | None = None,
+) -> None:
+    """Записать расход в api_costs."""
+    await get_pool().execute(
+        """INSERT INTO api_costs (user_id, bot_source, model, tokens_in, tokens_out, cost_usd, task_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+        user_id, bot_source, model, tokens_in, tokens_out, cost_usd, task_type,
+    )
+
+
+async def sum_api_costs(since: datetime) -> float:
+    """Сумма API-расходов с заданной даты."""
+    val = await get_pool().fetchval(
+        "SELECT COALESCE(SUM(cost_usd), 0) FROM api_costs WHERE timestamp >= $1", since,
+    )
+    return float(val)
+
+
+# === RAG / pgvector ===
+
+async def match_events(
+    query_embedding: list[float],
+    user_id: int,
+    match_count: int = 5,
+    project_id: int | None = None,
+) -> list[dict]:
+    """Семантический поиск по событиям (pgvector <=>)."""
+    vec = np.array(query_embedding, dtype=np.float32)
+    if project_id is not None:
+        rows = await get_pool().fetch(
+            """SELECT id, timestamp, user_id, project_id, bot_source, event_type,
+                      raw_text, json_data, 1 - (embedding <=> $1) AS similarity
+               FROM events
+               WHERE embedding IS NOT NULL AND user_id = $2 AND project_id = $3
+               ORDER BY embedding <=> $1 LIMIT $4""",
+            vec, user_id, project_id, match_count,
+        )
+    else:
+        rows = await get_pool().fetch(
+            """SELECT id, timestamp, user_id, project_id, bot_source, event_type,
+                      raw_text, json_data, 1 - (embedding <=> $1) AS similarity
+               FROM events
+               WHERE embedding IS NOT NULL AND user_id = $2
+               ORDER BY embedding <=> $1 LIMIT $3""",
+            vec, user_id, match_count,
+        )
+    return [dict(r) for r in rows]
+
+
+# === Export helpers ===
+
+async def get_user_finances(user_id: int) -> list[dict]:
+    rows = await get_pool().fetch(
+        "SELECT * FROM finances WHERE user_id = $1 ORDER BY timestamp", user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_user_events_export(user_id: int) -> list[dict]:
+    rows = await get_pool().fetch(
+        """SELECT id, timestamp, bot_source, event_type, raw_text, json_data, media_url, project_id
+           FROM events WHERE user_id = $1 ORDER BY timestamp""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_user_conversations(user_id: int, limit: int = 500) -> list[dict]:
+    rows = await get_pool().fetch(
+        """SELECT bot_source, role, content, created_at
+           FROM conversations WHERE user_id = $1
+           ORDER BY created_at DESC LIMIT $2""",
+        user_id, limit,
+    )
+    return [dict(r) for r in reversed(rows)]
+
+
+async def get_user_api_costs(user_id: int, limit: int = 200) -> list[dict]:
+    rows = await get_pool().fetch(
+        """SELECT bot_source, model, tokens_in, tokens_out, cost_usd, timestamp
+           FROM api_costs WHERE user_id = $1
+           ORDER BY timestamp DESC LIMIT $2""",
+        user_id, limit,
+    )
+    return [dict(r) for r in reversed(rows)]
+
+
+# === Charts helpers ===
+
+async def get_finance_data(user_id: int, project_id: int | None = None) -> list[dict]:
+    """Финансовые данные для графика тренда."""
+    if project_id:
+        rows = await get_pool().fetch(
+            """SELECT transaction_type, amount, timestamp FROM finances
+               WHERE user_id = $1 AND project_id = $2 ORDER BY timestamp""",
+            user_id, project_id,
+        )
+    else:
+        rows = await get_pool().fetch(
+            "SELECT transaction_type, amount, timestamp FROM finances WHERE user_id = $1 ORDER BY timestamp",
+            user_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def get_expense_data(user_id: int, project_id: int | None = None) -> list[dict]:
+    """Данные расходов по категориям для pie chart."""
+    if project_id:
+        rows = await get_pool().fetch(
+            """SELECT category, amount FROM finances
+               WHERE user_id = $1 AND transaction_type = 'expense' AND project_id = $2""",
+            user_id, project_id,
+        )
+    else:
+        rows = await get_pool().fetch(
+            "SELECT category, amount FROM finances WHERE user_id = $1 AND transaction_type = 'expense'",
+            user_id,
+        )
+    return [dict(r) for r in rows]

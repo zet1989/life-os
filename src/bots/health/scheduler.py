@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from src.ai.router import chat
-from src.db.supabase_client import get_client
+from src.db.queries import get_active_user_ids, get_recent_events
 
 logger = structlog.get_logger()
 
@@ -21,21 +21,9 @@ SUMMARY_PROMPT = (
 async def send_daily_summary(bot: Bot) -> None:
     """Отправить вечернюю сводку КБЖУ всем активным health-юзерам."""
     try:
-        supabase = get_client()
-
-        # Получаем всех активных юзеров с доступом к health-боту
-        resp = (
-            supabase.table("users")
-            .select("telegram_id")
-            .eq("is_active", True)
-            .execute()
-        )
-        users = resp.data or []
-
-        for user in users:
-            uid = user["telegram_id"]
+        user_ids = await get_active_user_ids()
+        for uid in user_ids:
             await _send_summary_to_user(bot, uid)
-
     except Exception:
         logger.exception("daily_summary_failed")
 
@@ -43,20 +31,12 @@ async def send_daily_summary(bot: Bot) -> None:
 async def _send_summary_to_user(bot: Bot, user_id: int) -> None:
     """Сводка для одного юзера."""
     try:
-        supabase = get_client()
-
-        # Получаем все meal-события за сегодня
-        resp = (
-            supabase.table("events")
-            .select("raw_text, json_data")
-            .eq("user_id", user_id)
-            .eq("event_type", "meal")
-            .eq("bot_source", "health")
-            .gte("created_at", "now() - interval '1 day'")
-            .order("created_at")
-            .execute()
+        meals = await get_recent_events(
+            user_id=user_id,
+            event_type="meal",
+            bot_source="health",
+            limit=20,
         )
-        meals = resp.data or []
 
         if not meals:
             return  # Нет данных — не беспокоим

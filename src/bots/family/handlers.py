@@ -315,20 +315,13 @@ async def _check_budget_limit(project_id: int, category: str) -> str | None:
 
     Лимиты хранятся в projects.metadata.limits: {"продукты": 40000, ...}
     """
-    from src.db.supabase_client import get_supabase
+    from src.db.queries import get_project
 
-    proj = (
-        get_supabase()
-        .table("projects")
-        .select("metadata")
-        .eq("project_id", project_id)
-        .maybe_single()
-        .execute()
-    )
-    if not proj.data:
+    proj = await get_project(project_id)
+    if not proj:
         return None
 
-    limits = (proj.data.get("metadata") or {}).get("limits", {})
+    limits = (proj.get("metadata") or {}).get("limits", {})
     limit = limits.get(category)
     if limit is None:
         return None

@@ -19,11 +19,12 @@ from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.db.queries import (
     create_event,
+    create_goal,
     get_active_goals,
     get_finance_summary,
     get_user_projects,
+    update_goal,
 )
-from src.db.supabase_client import get_supabase
 from src.bots.master.keyboard import (
     Mode,
     get_user_mode,
@@ -373,13 +374,12 @@ async def cmd_add_goal(message: Message, db_user: dict) -> None:
     parsed = _extract_json(result)
     if parsed and "title" in parsed:
         goal_type = parsed.get("type", "yearly_goal")
-        get_supabase().table("goals").insert({
-            "user_id": user_id,
-            "type": goal_type,
-            "title": parsed["title"],
-            "description": parsed.get("description", ""),
-            "status": "active",
-        }).execute()
+        await create_goal(
+            user_id=user_id,
+            goal_type=goal_type,
+            title=parsed["title"],
+            description=parsed.get("description", ""),
+        )
 
         emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(goal_type, "📌")
         await message.answer(
@@ -417,9 +417,9 @@ async def cmd_progress(message: Message, db_user: dict) -> None:
     if pct >= 100:
         from datetime import datetime, timezone
         update_data["status"] = "achieved"
-        update_data["achieved_at"] = datetime.now(timezone.utc).isoformat()
+        update_data["achieved_at"] = datetime.now(timezone.utc)
 
-    get_supabase().table("goals").update(update_data).eq("id", goal_id).eq("user_id", user_id).execute()
+    await update_goal(goal_id, user_id, **update_data)
 
     emoji = "🎉" if pct >= 100 else "📈"
     await message.answer(
@@ -468,13 +468,12 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
         parsed = _extract_json(result)
         if parsed and "title" in parsed:
             goal_type = parsed.get("type", "yearly_goal")
-            get_supabase().table("goals").insert({
-                "user_id": user_id,
-                "type": goal_type,
-                "title": parsed["title"],
-                "description": parsed.get("description", ""),
-                "status": "active",
-            }).execute()
+            await create_goal(
+                user_id=user_id,
+                goal_type=goal_type,
+                title=parsed["title"],
+                description=parsed.get("description", ""),
+            )
             emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(goal_type, "📌")
             await message.answer(
                 f"{emoji} Добавлено: <b>{parsed['title']}</b>",

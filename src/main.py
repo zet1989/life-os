@@ -15,6 +15,7 @@ from aiogram.enums import ParseMode
 
 from src.config import settings
 from src.core.acl import ACLMiddleware
+from src.db.postgres import close_pool, init_pool
 
 structlog.configure(
     wrapper_class=structlog.make_filtering_bound_logger(
@@ -114,6 +115,7 @@ def _collect_bots() -> list[dict]:
 # === Polling mode (разработка) ===
 
 async def _main_polling() -> None:
+    await init_pool()
     bots_cfg = _collect_bots()
     if not bots_cfg:
         logger.error("no_bots_configured")
@@ -130,7 +132,10 @@ async def _main_polling() -> None:
         logger.info("bot_registered", bot=cfg["name"])
 
     logger.info("all_bots_starting", count=len(tasks), mode="polling")
-    await asyncio.gather(*tasks)
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        await close_pool()
 
 
 # === Webhook mode (продакшен) ===
@@ -138,6 +143,7 @@ async def _main_polling() -> None:
 async def _main_webhook() -> None:
     from aiohttp import web
 
+    await init_pool()
     bots_cfg = _collect_bots()
     if not bots_cfg:
         logger.error("no_bots_configured")
@@ -202,6 +208,7 @@ async def _main_webhook() -> None:
         for bot, dp in instances:
             await bot.delete_webhook()
             await bot.session.close()
+        await close_pool()
         logger.info("graceful_shutdown_complete")
 
     app.on_shutdown.append(on_shutdown)

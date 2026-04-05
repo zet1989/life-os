@@ -1,5 +1,5 @@
 -- Life OS: начальная схема БД
--- Выполнить в Supabase SQL Editor
+-- Автоматически выполняется при первом запуске PostgreSQL в Docker
 
 -- Расширение для pgvector (семантический поиск)
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -179,7 +179,7 @@ DECLARE
 BEGIN
     SELECT COALESCE(SUM(cost_usd), 0) INTO total
     FROM api_costs
-    WHERE created_at >= p_since;
+    WHERE timestamp >= p_since;
     RETURN total;
 END;
 $$;

@@ -4,6 +4,8 @@
 """
 
 import tempfile
+from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib
@@ -13,42 +15,22 @@ import matplotlib.dates as mdates
 
 import structlog
 
-from src.db.supabase_client import get_supabase
+from src.db.queries import get_active_goals, get_expense_data, get_finance_data
 
 logger = structlog.get_logger()
 
 
 async def finance_trend_chart(user_id: int, project_id: int | None = None) -> Path | None:
-    """Тренд расходов/доходов по дням.
-
-    Возвращает путь к PNG или None если нет данных.
-    """
-    sb = get_supabase()
-
-    query = (
-        sb.table("finances")
-        .select("transaction_type, amount, created_at")
-        .eq("user_id", user_id)
-        .order("created_at")
-    )
-    if project_id:
-        query = query.eq("project_id", project_id)
-
-    resp = query.execute()
-    rows = resp.data
-
+    """Тренд расходов/доходов по дням."""
+    rows = await get_finance_data(user_id, project_id)
     if not rows:
         return None
-
-    # Группируем по дням
-    from collections import defaultdict
-    from datetime import datetime
 
     daily_income: dict[str, float] = defaultdict(float)
     daily_expense: dict[str, float] = defaultdict(float)
 
     for row in rows:
-        day = row["created_at"][:10]
+        day = str(row["timestamp"])[:10]
         if row["transaction_type"] == "income":
             daily_income[day] += float(row["amount"])
         else:
@@ -79,17 +61,7 @@ async def finance_trend_chart(user_id: int, project_id: int | None = None) -> Pa
 
 async def goals_progress_chart(user_id: int) -> Path | None:
     """Вертикальная диаграмма прогресса целей."""
-    sb = get_supabase()
-
-    resp = (
-        sb.table("goals")
-        .select("title, progress_pct, type")
-        .eq("user_id", user_id)
-        .eq("status", "active")
-        .execute()
-    )
-    goals = resp.data
-
+    goals = await get_active_goals(user_id)
     if not goals:
         return None
 
@@ -128,24 +100,10 @@ async def goals_progress_chart(user_id: int) -> Path | None:
 
 async def expense_categories_pie(user_id: int, project_id: int | None = None) -> Path | None:
     """Круговая диаграмма расходов по категориям."""
-    sb = get_supabase()
-
-    query = (
-        sb.table("finances")
-        .select("category, amount")
-        .eq("user_id", user_id)
-        .eq("transaction_type", "expense")
-    )
-    if project_id:
-        query = query.eq("project_id", project_id)
-
-    resp = query.execute()
-    rows = resp.data
-
+    rows = await get_expense_data(user_id, project_id)
     if not rows:
         return None
 
-    from collections import defaultdict
     by_cat: dict[str, float] = defaultdict(float)
     for row in rows:
         by_cat[row.get("category", "прочее")] += float(row["amount"])

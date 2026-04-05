@@ -76,9 +76,9 @@ async def _init_project_ids() -> None:
     if PROJECT_HOUSE is not None:
         return
     try:
-        from src.db.supabase_client import get_client
-        sb = get_client()
-        for row in sb.table("projects").select("project_id, name").execute().data or []:
+        from src.db.postgres import get_pool
+        rows = await get_pool().fetch("SELECT project_id, name FROM projects WHERE status = 'active'")
+        for row in rows:
             name_lower = row["name"].lower()
             if "house" in name_lower or "renovation" in name_lower:
                 PROJECT_HOUSE = row["project_id"]

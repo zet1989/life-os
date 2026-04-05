@@ -1,6 +1,6 @@
 """Логирование расходов на API в таблицу api_costs."""
 
-from src.db.supabase_client import get_supabase
+from src.db.queries import insert_api_cost
 
 # Примерные цены за 1M токенов (input/output) — обновлять при изменении прайса
 MODEL_PRICES: dict[str, tuple[float, float]] = {
@@ -28,12 +28,12 @@ async def log_api_cost(
 ) -> None:
     """Записать расход в таблицу api_costs."""
     cost = _estimate_cost(model, tokens_in, tokens_out)
-    get_supabase().table("api_costs").insert({
-        "user_id": user_id,
-        "bot_source": bot_source,
-        "model": model,
-        "tokens_in": tokens_in,
-        "tokens_out": tokens_out,
-        "cost_usd": cost,
-        "task_type": task_type,
-    }).execute()
+    await insert_api_cost(
+        user_id=user_id,
+        bot_source=bot_source,
+        model=model,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost_usd=cost,
+        task_type=task_type,
+    )

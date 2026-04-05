@@ -1,26 +1,25 @@
-"""Загрузка файлов в Supabase Storage."""
+"""Локальное хранилище медиафайлов.
+
+Файлы сохраняются в /app/media/ (Docker volume).
+"""
+
+from pathlib import Path
 
 import structlog
 
-from src.db.supabase_client import get_supabase
-
 logger = structlog.get_logger()
 
-BUCKET = "media"
+MEDIA_DIR = Path("/app/media")
 
 
-async def upload_to_storage(
+async def save_media(
     data: bytes,
     path: str,
     content_type: str = "image/jpeg",
 ) -> str:
-    """Загрузить файл в Supabase Storage и вернуть публичный URL."""
-    sb = get_supabase()
-    sb.storage.from_(BUCKET).upload(
-        path=path,
-        file=data,
-        file_options={"content-type": content_type},
-    )
-    public_url = sb.storage.from_(BUCKET).get_public_url(path)
-    logger.info("storage_uploaded", path=path)
-    return public_url
+    """Сохранить файл на диск. Возвращает локальный путь."""
+    filepath = MEDIA_DIR / path
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    filepath.write_bytes(data)
+    logger.info("media_saved", path=str(filepath), size=len(data))
+    return str(filepath)

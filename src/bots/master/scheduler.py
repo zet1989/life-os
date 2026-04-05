@@ -11,8 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from src.ai.rag import search
 from src.ai.router import chat
-from src.db.queries import get_active_goals, get_finance_summary, get_user_projects
-from src.db.supabase_client import get_supabase
+from src.db.queries import get_active_goals, get_admin_users, get_finance_summary, get_user_projects
 from src.bots.master.prompts import AUDIT_PROMPT, MASTER_SYSTEM, VISION_CONTEXT
 
 logger = structlog.get_logger()
@@ -21,15 +20,7 @@ logger = structlog.get_logger()
 async def send_monthly_audit(bot: Bot) -> None:
     """Отправить ежемесячный аудит всем admin-пользователям."""
     try:
-        resp = (
-            get_supabase()
-            .table("users")
-            .select("user_id, display_name")
-            .eq("is_active", True)
-            .eq("role", "admin")
-            .execute()
-        )
-        admins = resp.data or []
+        admins = await get_admin_users()
 
         for admin in admins:
             uid = admin["user_id"]

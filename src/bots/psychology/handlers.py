@@ -128,7 +128,7 @@ async def mode_retro(message: Message, db_user: dict) -> None:
 
 @router.message(Command("add_habit"))
 async def cmd_add_habit(message: Message, db_user: dict) -> None:
-    from src.db.supabase_client import get_supabase
+    from src.db.queries import create_goal
 
     user_id = message.from_user.id  # type: ignore[union-attr]
     args = (message.text or "").replace("/add_habit", "").strip()
@@ -137,12 +137,11 @@ async def cmd_add_habit(message: Message, db_user: dict) -> None:
         await message.answer("Использование: /add_habit Не курить")
         return
 
-    get_supabase().table("goals").insert({
-        "user_id": user_id,
-        "type": "habit_target",
-        "title": args,
-        "status": "active",
-    }).execute()
+    await create_goal(
+        user_id=user_id,
+        goal_type="habit_target",
+        title=args,
+    )
 
     await message.answer(
         f"✅ Привычка добавлена: <b>{args}</b>\n"
@@ -161,33 +160,21 @@ async def cb_habit(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
 
     # Получаем привычку
-    from src.db.supabase_client import get_supabase
+    from src.db.queries import get_goal, get_recent_events
 
-    goal = (
-        get_supabase()
-        .table("goals")
-        .select("title")
-        .eq("id", goal_id)
-        .maybe_single()
-        .execute()
-    )
-    habit_title = goal.data.get("title", "привычка") if goal.data else "привычка"
+    goal = await get_goal(goal_id)
+    habit_title = goal.get("title", "привычка") if goal else "привычка"
 
     # Считаем серию (streak) — сколько подряд success
-    recent = (
-        get_supabase()
-        .table("events")
-        .select("json_data")
-        .eq("user_id", user_id)
-        .eq("event_type", "habit")
-        .eq("bot_source", BOT_SOURCE)
-        .order("timestamp", desc=True)
-        .limit(30)
-        .execute()
+    recent_evts = await get_recent_events(
+        user_id=user_id,
+        event_type="habit",
+        bot_source=BOT_SOURCE,
+        limit=30,
     )
 
     streak = 0
-    for ev in recent.data:
+    for ev in recent_evts:
         jd = ev.get("json_data") or {}
         if jd.get("goal_id") == goal_id and jd.get("status") == "success":
             streak += 1

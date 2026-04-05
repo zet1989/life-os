@@ -12,7 +12,7 @@ import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from src.config import settings
-from src.db.supabase_client import get_supabase
+from src.db.queries import get_model_config as _db_get_model_config
 from src.utils.cost_tracker import log_api_cost
 from src.utils.budget_limiter import check_budget, BudgetExceededError
 
@@ -29,20 +29,14 @@ async def get_model_config(task_type: str) -> dict:
     if task_type in _model_cache:
         return _model_cache[task_type]
 
-    result = (
-        get_supabase()
-        .table("model_routing")
-        .select("*")
-        .eq("task_type", task_type)
-        .maybe_single()
-        .execute()
-    )
-    config = result.data or {
-        "model": "gpt-4o-mini",
-        "max_tokens": 1000,
-        "temperature": 0.5,
-        "fallback_model": None,
-    }
+    config = await _db_get_model_config(task_type)
+    if config is None:
+        config = {
+            "model": "gpt-4o-mini",
+            "max_tokens": 1000,
+            "temperature": 0.5,
+            "fallback_model": None,
+        }
     _model_cache[task_type] = config
     return config
 

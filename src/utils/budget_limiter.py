@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import structlog
 
 from src.config import settings
-from src.db.supabase_client import get_supabase
+from src.db.queries import sum_api_costs
 
 logger = structlog.get_logger()
 
@@ -24,13 +24,8 @@ async def check_budget() -> None:
     now = datetime.now(timezone.utc)
 
     # Дневной лимит
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    daily_resp = (
-        get_supabase()
-        .rpc("sum_api_costs", {"p_since": day_start})
-        .execute()
-    )
-    daily_total = float(daily_resp.data or 0)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_total = await sum_api_costs(day_start)
 
     if daily_total >= settings.api_daily_limit_usd:
         logger.warning("budget_daily_exceeded", daily=daily_total, limit=settings.api_daily_limit_usd)
@@ -40,13 +35,8 @@ async def check_budget() -> None:
         )
 
     # Месячный лимит
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    monthly_resp = (
-        get_supabase()
-        .rpc("sum_api_costs", {"p_since": month_start})
-        .execute()
-    )
-    monthly_total = float(monthly_resp.data or 0)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    monthly_total = await sum_api_costs(month_start)
 
     if monthly_total >= settings.api_monthly_limit_usd:
         logger.warning("budget_monthly_exceeded", monthly=monthly_total, limit=settings.api_monthly_limit_usd)
