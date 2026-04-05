@@ -29,7 +29,8 @@ class Settings(BaseSettings):
 
     # --- AI APIs ---
     openrouter_api_key: str
-    openai_api_key: str = ""        # опционально, нужен только для Whisper/embeddings
+    openai_api_key: str = ""        # опционально
+    groq_api_key: str = ""          # Groq API для Whisper транскрипции
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
