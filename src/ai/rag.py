@@ -1,0 +1,98 @@
+"""RAG — семантический поиск по pgvector.
+
+Запрос → embedding → SQL оператор <=> → top-K результатов.
+Фильтрация по user_id и опционально project_id (ACL).
+"""
+
+import structlog
+
+from src.ai.embeddings import generate_embedding
+from src.db.supabase_client import get_supabase
+
+logger = structlog.get_logger()
+
+
+async def store_event_embedding(
+    event_id: int,
+    text: str,
+    user_id: int | None = None,
+    bot_source: str | None = None,
+) -> None:
+    """Сгенерировать эмбеддинг и сохранить в поле embedding таблицы events."""
+    embedding = await generate_embedding(text, user_id=user_id, bot_source=bot_source)
+
+    get_supabase().table("events").update(
+        {"embedding": embedding}
+    ).eq("id", event_id).execute()
+
+    logger.info("event_embedding_stored", event_id=event_id)
+
+
+async def search(
+    query: str,
+    user_id: int,
+    top_k: int = 5,
+    project_id: int | None = None,
+    bot_source: str | None = None,
+) -> list[dict]:
+    """Семантический поиск по событиям пользователя.
+
+    Использует Supabase RPC функцию match_events (нужно создать в БД).
+    Фильтрует по user_id (ACL) и опционально по project_id.
+    """
+    embedding = await generate_embedding(query, user_id=user_id, bot_source=bot_source)
+
+    params: dict = {
+        "query_embedding": embedding,
+        "match_count": top_k,
+        "p_user_id": user_id,
+    }
+    if project_id is not None:
+        params["p_project_id"] = project_id
+
+    result = get_supabase().rpc("match_events", params).execute()
+
+    logger.info("rag_search", query=query[:50], results=len(result.data))
+    return result.data
+
+
+async def rag_answer(
+    query: str,
+    user_id: int,
+    system_prompt: str,
+    top_k: int = 5,
+    project_id: int | None = None,
+    bot_source: str | None = None,
+) -> str:
+    """RAG-ответ: поиск релевантных событий → формирование контекста → LLM.
+
+    Паттерн: retrieve → augment → generate.
+    """
+    from src.ai.router import chat
+
+    # Retrieve
+    docs = await search(query, user_id, top_k=top_k, project_id=project_id, bot_source=bot_source)
+
+    if not docs:
+        context = "Релевантных записей не найдено."
+    else:
+        chunks = []
+        for doc in docs:
+            ts = doc.get("timestamp", "")
+            text = doc.get("raw_text", "")
+            etype = doc.get("event_type", "")
+            chunks.append(f"[{ts}] ({etype}) {text}")
+        context = "\n".join(chunks)
+
+    # Augment + Generate
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Контекст из базы знаний:\n{context}\n\nВопрос: {query}"},
+    ]
+
+    return await chat(
+        messages=messages,
+        task_type="rag_answer",
+        user_id=user_id,
+        bot_source=bot_source,
+    )
