@@ -12,6 +12,7 @@ from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message, PhotoSize
+from src.utils.telegram import safe_answer, safe_edit
 
 from src.ai.router import chat
 from src.ai.vision import analyze_photo
@@ -391,7 +392,7 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
         else:
             await processing.edit_text("Нет семейных проектов для записи расхода.")
     else:
-        await processing.edit_text(result)
+        await safe_edit(processing, result)
 
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
@@ -501,7 +502,7 @@ async def _attach_finance_direct(
             confirm += f"\n\n{limit_warning}"
         await message.answer(confirm, reply_markup=main_keyboard())
     else:
-        await message.answer(result, reply_markup=main_keyboard())
+        await safe_answer(message, result, reply_markup=main_keyboard())
 
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 

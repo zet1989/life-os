@@ -12,6 +12,7 @@ from src.ai.router import chat
 from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
+from src.utils.telegram import safe_answer
 from src.db.queries import create_event, create_finance
 from src.bots.assets.keyboard import (
     Mode,
@@ -239,7 +240,7 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
     await store_event_embedding(event["id"], result, user_id=user_id, bot_source=BOT_SOURCE)
 
     await processing.delete()
-    await message.answer(result, reply_markup=main_keyboard())
+    await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -323,7 +324,7 @@ async def _process_text(message: Message, user_id: int, text: str, mode: Mode) -
                 source_event_id=event["id"],
             )
 
-    await message.answer(result, reply_markup=main_keyboard())
+    await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -342,7 +343,7 @@ async def _process_question(message: Message, user_id: int, query: str) -> None:
         bot_source=BOT_SOURCE,
     )
 
-    await message.answer(result, reply_markup=main_keyboard())
+    await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 

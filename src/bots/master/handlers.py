@@ -12,6 +12,7 @@ import structlog
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import FSInputFile, Message
+from src.utils.telegram import safe_answer, safe_edit
 
 from src.ai.rag import rag_answer, search, store_event_embedding
 from src.ai.router import chat
@@ -388,7 +389,7 @@ async def cmd_add_goal(message: Message, db_user: dict) -> None:
             reply_markup=main_keyboard(),
         )
     else:
-        await message.answer(result, reply_markup=main_keyboard())
+        await safe_answer(message, result, reply_markup=main_keyboard())
 
 
 # === /progress — обновить прогресс цели ===
@@ -480,7 +481,7 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
                 reply_markup=main_keyboard(),
             )
         else:
-            await message.answer(result, reply_markup=main_keyboard())
+            await safe_answer(message, result, reply_markup=main_keyboard())
         return
 
     if mode == Mode.DIARY:
@@ -508,7 +509,7 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
         bot_source=BOT_SOURCE,
     )
 
-    await message.answer(result, reply_markup=main_keyboard())
+    await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 

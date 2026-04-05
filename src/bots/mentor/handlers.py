@@ -13,6 +13,7 @@ from aiogram.types import CallbackQuery, Message
 
 from src.ai.rag import rag_answer, search, store_event_embedding
 from src.ai.router import chat
+from src.utils.telegram import safe_answer
 from src.ai.whisper import transcribe_voice
 from src.core.context import save_assistant_reply
 from src.db.queries import (
@@ -500,7 +501,7 @@ async def _attach_idea_direct(
     )
     await store_event_embedding(event["id"], text, user_id=user_id, bot_source=BOT_SOURCE)
 
-    await message.answer(result, reply_markup=main_keyboard())
+    await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -517,7 +518,7 @@ async def _process_question(message: Message, user_id: int, query: str) -> None:
         top_k=5,
         bot_source=BOT_SOURCE,
     )
-    await message.answer(result, reply_markup=main_keyboard())
+    await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 

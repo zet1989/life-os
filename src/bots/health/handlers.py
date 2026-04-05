@@ -11,6 +11,7 @@ from src.ai.router import chat
 from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
+from src.utils.telegram import safe_answer
 from src.db.queries import create_event, update_user_settings
 from src.bots.health.prompts import (
     MEAL_PHOTO_PROMPT,
@@ -110,7 +111,7 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
     )
 
     await processing.delete()
-    await message.answer(result, reply_markup=main_keyboard())
+    await safe_answer(message, result, reply_markup=main_keyboard())
 
     # Сохраняем в историю диалога
     await save_assistant_reply(user_id, BOT_SOURCE, result)
@@ -174,7 +175,7 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
         json_data=json_data,
     )
 
-    await message.answer(result, reply_markup=main_keyboard())
+    await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -192,7 +193,7 @@ async def _process_workout(message: Message, user_id: int, text: str) -> None:
         json_data=json_data,
     )
 
-    await message.answer(result, reply_markup=main_keyboard())
+    await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 

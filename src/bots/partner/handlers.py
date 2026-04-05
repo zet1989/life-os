@@ -13,6 +13,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from src.ai.router import chat
+from src.utils.telegram import safe_answer
 from src.ai.whisper import transcribe_voice
 from src.core.context import save_assistant_reply
 from src.db.queries import (
@@ -457,7 +458,7 @@ async def _attach_finance_direct(
         )
         await message.answer(confirm, reply_markup=main_keyboard())
     else:
-        await message.answer(result, reply_markup=main_keyboard())
+        await safe_answer(message, result, reply_markup=main_keyboard())
 
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 

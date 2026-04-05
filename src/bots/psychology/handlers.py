@@ -13,6 +13,7 @@ from src.ai.rag import rag_answer, store_event_embedding
 from src.ai.router import chat
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
+from src.utils.telegram import safe_answer
 from src.db.queries import create_event, get_active_goals
 from src.bots.psychology.keyboard import (
     Mode,
@@ -85,7 +86,7 @@ async def mode_habits(message: Message, db_user: dict) -> None:
     if not habits:
         await message.answer(
             "Нет активных привычек для трекинга.\n"
-            "Добавь через /add_habit <название>",
+            "Добавь через /add_habit &lt;название&gt;",
             reply_markup=main_keyboard(),
         )
         return
@@ -220,7 +221,7 @@ async def cb_habit(callback: CallbackQuery) -> None:
 
     await callback.answer(f"{emoji} {status_text}")
     if callback.message:
-        await callback.message.answer(text, reply_markup=main_keyboard())  # type: ignore[union-attr]
+        await safe_answer(callback.message, text, reply_markup=main_keyboard())  # type: ignore[union-attr]
 
     await store_event_embedding(event["id"], f"{habit_title}: {status}, серия {streak} дней", user_id, BOT_SOURCE)
     await save_assistant_reply(user_id, BOT_SOURCE, reply)
@@ -302,5 +303,5 @@ async def _process_diary(message: Message, user_id: int, text: str) -> None:
         bot_source=BOT_SOURCE,
     )
 
-    await message.answer(reply, reply_markup=main_keyboard())
+    await safe_answer(message, reply, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, reply)
