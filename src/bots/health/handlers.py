@@ -14,7 +14,7 @@ from src.ai.router import chat
 from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.utils.telegram import safe_answer
-from src.db.queries import create_event, get_today_meals, get_today_workouts, update_user_settings
+from src.db.queries import create_event, get_today_meals, get_today_workouts, get_user, update_user_settings
 from src.bots.health.prompts import (
     MEAL_PHOTO_PROMPT,
     NUTRITIONIST_SYSTEM,
@@ -33,6 +33,15 @@ MSK = ZoneInfo("Europe/Moscow")
 def _now_str() -> str:
     """Текущее время в MSK для промптов."""
     return datetime.now(MSK).strftime("%d.%m.%Y %H:%M")
+
+
+async def _get_user_settings(user_id: int) -> str:
+    """Загрузить персональные настройки пользователя из БД."""
+    user = await get_user(user_id)
+    overrides = (user or {}).get("system_prompt_overrides") or ""
+    if overrides:
+        return f"⚙️ ПЕРСОНАЛЬНЫЕ НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ:\n{overrides}"
+    return "⚙️ ПЕРСОНАЛЬНЫЕ НАСТРОЙКИ: не заданы (используй стандартные нормы)."
 
 
 async def _today_meals_context(user_id: int) -> str:
@@ -218,16 +227,13 @@ async def handle_text(message: Message, db_user: dict) -> None:
 # === Внутренние обработчики ===
 
 async def _process_food_text(message: Message, user_id: int, text: str) -> None:
-    """Обработка текстового описания еды — STATELESS.
-
-    Каждое сообщение обрабатывается независимо:
-    - System prompt содержит все данные из БД (СЪЕДЕНО СЕГОДНЯ)
-    - Никакой conversation history — это устраняет накопление калорий
-    - Event создаётся ТОЛЬКО если LLM вернул JSON с КБЖУ
-    """
+    """Обработка текстового описания еды — STATELESS."""
     meals_ctx = await _today_meals_context(user_id)
+    settings = await _get_user_settings(user_id)
     system = NUTRITIONIST_SYSTEM.format(
-        current_time=_now_str(), today_meals_context=meals_ctx,
+        current_time=_now_str(),
+        today_meals_context=meals_ctx,
+        user_settings=settings,
     )
     # STATELESS: только system prompt + текущее сообщение, НОЛЬ истории
     messages = [{"role": "system", "content": system}, {"role": "user", "content": text}]
@@ -287,11 +293,7 @@ async def _process_settings(message: Message, user_id: int, text: str) -> None:
 
 
 def _format_meal_response(raw_result: str, json_data: dict | None, user_id: int = 0) -> str:
-    """Строим красивую карточку КБЖУ из json_data.
-
-    НЕ полагаемся на текст LLM — он ненадёжен.
-    Карточку строим сами из распарсенного JSON.
-    """
+    """Строим богатую карточку КБЖУ + оценка + советы из json_data."""
     if not json_data or "calories" not in json_data:
         # LLM не дал КБЖУ — показываем текст как есть (вопрос/ответ)
         cleaned = re.sub(r'```json\s*\{.*?\}\s*```', '', raw_result, flags=re.DOTALL).strip()
@@ -302,26 +304,53 @@ def _format_meal_response(raw_result: str, json_data: dict | None, user_id: int 
     prot = json_data.get("protein", "?")
     fat = json_data.get("fat", "?")
     carbs = json_data.get("carbs", "?")
+    fiber = json_data.get("fiber")
+    health_score = json_data.get("health_score")
+    verdict = json_data.get("verdict", "")
     comment = json_data.get("comment", "")
+    tip = json_data.get("tip", "")
+    today_status = json_data.get("today_status", "")
 
-    card = (
-        f"\U0001f37d <b>{desc}</b>\n\n"
-        f"\U0001f525 Калории: <b>{cal}</b> ккал\n"
-        f"\U0001f969 Белки: <b>{prot}</b> г\n"
-        f"\U0001f9c8 Жиры: <b>{fat}</b> г\n"
-        f"\U0001f35e Углеводы: <b>{carbs}</b> г"
+    # === Основная карточка ===
+    card = f"🍽 <b>{desc}</b>\n"
+
+    # Вердикт (цветной)
+    if verdict:
+        card += f"{verdict}\n"
+
+    # КБЖУ
+    card += (
+        f"\n🔥 Калории: <b>{cal}</b> ккал\n"
+        f"🥩 Белки: <b>{prot}</b> г\n"
+        f"🧈 Жиры: <b>{fat}</b> г\n"
+        f"🍞 Углеводы: <b>{carbs}</b> г"
     )
+    if fiber:
+        card += f"\n🥬 Клетчатка: <b>{fiber}</b> г"
 
+    # Health score
+    if health_score is not None:
+        score_bar = "●" * health_score + "○" * (10 - health_score)
+        card += f"\n\n💚 Полезность: {score_bar} {health_score}/10"
+
+    # Комментарий нутрициолога
     if comment:
-        card += f"\n\n{comment}"
+        card += f"\n\n💬 {comment}"
+
+    # Совет
+    if tip:
+        card += f"\n\n💡 <b>Совет:</b> {tip}"
+
+    # Статус дня
+    if today_status:
+        card += f"\n\n📊 <i>{today_status}</i>"
 
     return card
 
 
 def _format_workout_response(raw_result: str, json_data: dict | None) -> str:
-    """Формируем красивый ответ из JSON тренировки + комментарий LLM."""
+    """Формируем красивый ответ из JSON тренировки."""
     if not json_data or "exercises" not in json_data:
-        # Убираем JSON-блок если он есть, но не распарсился как ожидалось
         cleaned = re.sub(r'```json\s*.*?\s*```', '', raw_result, flags=re.DOTALL).strip()
         return cleaned or raw_result
 
@@ -329,9 +358,13 @@ def _format_workout_response(raw_result: str, json_data: dict | None) -> str:
         json_data.get("type", ""), "🏋️ Тренировка"
     )
     duration = json_data.get("duration_min")
+    cal_burned = json_data.get("calories_burned")
+
     pretty = f"{workout_type}"
     if duration:
         pretty += f" — {duration} мин"
+    if cal_burned:
+        pretty += f" — ~{cal_burned} ккал"
     pretty += "\n\n"
 
     for ex in json_data["exercises"]:
@@ -349,10 +382,14 @@ def _format_workout_response(raw_result: str, json_data: dict | None) -> str:
             pretty += f" — {detail}"
         pretty += "\n"
 
-    # Комментарий из json_data
     comment = json_data.get("comment", "")
     if comment:
-        pretty += f"\n{comment}"
+        pretty += f"\n💬 {comment}"
+
+    tip = json_data.get("tip", "")
+    if tip:
+        pretty += f"\n💡 <b>Совет:</b> {tip}"
+
     return pretty
 
 
