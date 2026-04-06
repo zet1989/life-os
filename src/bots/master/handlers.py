@@ -17,7 +17,7 @@ from aiogram.types import FSInputFile, Message
 from src.utils.telegram import safe_answer, safe_edit
 
 from src.ai.rag import rag_answer, search, store_event_embedding
-from src.ai.router import chat, _get_free_count_today, FREE_DAILY_LIMIT, get_model_config
+from src.ai.router import chat, get_model_config
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.db.queries import (
@@ -264,14 +264,12 @@ async def mode_ai_panel(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     set_user_mode(user_id, Mode.AI_PANEL)
 
-    free_used = _get_free_count_today()
-    free_left = max(0, FREE_DAILY_LIMIT - free_used)
-
     task_types = [
-        "meal_photo", "daily_summary", "workout_parse",
+        "meal_photo", "doctor_consult", "daily_summary", "workout_parse",
         "psychology_diary", "psychology_habit",
         "family_parse", "family_receipt",
         "general_chat", "master_audit", "master_goal", "master_talk",
+        "business_strategy",
     ]
 
     lines = []
@@ -284,11 +282,8 @@ async def mode_ai_panel(message: Message, db_user: dict) -> None:
 
     text = (
         f"🤖 <b>AI Панель</b>\n\n"
-        f"🆓 Бесплатные запросы сегодня: <b>{free_used}/{FREE_DAILY_LIMIT}</b>\n"
-        f"   Осталось: <b>{free_left}</b>\n\n"
         f"📡 <b>Маршрутизация моделей:</b>\n{models_text}\n\n"
-        f"Модели управляются через таблицу <code>model_routing</code> в БД.\n"
-        f"Бесплатные модели используются автоматически, пока лимит не исчерпан."
+        f"Модели управляются через таблицу <code>model_routing</code> в БД."
     )
 
     await message.answer(text, reply_markup=main_keyboard())
