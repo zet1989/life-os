@@ -1,4 +1,6 @@
 .env
+.deploy-secrets
+deploy.ps1
 __pycache__/
 *.pyc
 .venv/
