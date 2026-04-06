@@ -13,9 +13,8 @@ from aiogram.types import Message
 from src.ai.router import chat
 from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
-from src.core.context import save_assistant_reply
 from src.utils.telegram import safe_answer
-from src.db.queries import create_event, get_today_meals, get_today_workouts, get_today_messages, save_message, update_user_settings
+from src.db.queries import create_event, get_today_meals, get_today_workouts, update_user_settings
 from src.bots.health.prompts import (
     MEAL_PHOTO_PROMPT,
     NUTRITIONIST_SYSTEM,
@@ -157,23 +156,21 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
     # Пытаемся извлечь JSON из ответа
     json_data = _extract_json(result)
 
-    # Сохраняем событие
-    await create_event(
-        user_id=user_id,
-        event_type="meal",
-        bot_source=BOT_SOURCE,
-        raw_text=result,
-        json_data=json_data,
-        media_url=None,  # URL уже в Storage
-    )
+    # Сохраняем событие ТОЛЬКО если есть КБЖУ
+    if json_data and "calories" in json_data:
+        await create_event(
+            user_id=user_id,
+            event_type="meal",
+            bot_source=BOT_SOURCE,
+            raw_text="[фото еды]",
+            json_data=json_data,
+            media_url=None,
+        )
 
     display_text = _format_meal_response(result, json_data)
 
     await processing.delete()
     await safe_answer(message, display_text, reply_markup=main_keyboard())
-
-    # Сохраняем в историю диалога
-    await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
 # === Голосовое сообщение ===
@@ -221,55 +218,60 @@ async def handle_text(message: Message, db_user: dict) -> None:
 # === Внутренние обработчики ===
 
 async def _process_food_text(message: Message, user_id: int, text: str) -> None:
-    """Обработка текстового описания еды."""
+    """Обработка текстового описания еды — STATELESS.
+
+    Каждое сообщение обрабатывается независимо:
+    - System prompt содержит все данные из БД (СЪЕДЕНО СЕГОДНЯ)
+    - Никакой conversation history — это устраняет накопление калорий
+    - Event создаётся ТОЛЬКО если LLM вернул JSON с КБЖУ
+    """
     meals_ctx = await _today_meals_context(user_id)
     system = NUTRITIONIST_SYSTEM.format(
         current_time=_now_str(), today_meals_context=meals_ctx,
     )
-    # Минимум истории (2 сообщения) — вся правда о калориях в system prompt из БД
-    history = await get_today_messages(user_id, BOT_SOURCE, limit=2)
-    messages = [{"role": "system", "content": system}] + history + [{"role": "user", "content": text}]
-    await save_message(user_id, BOT_SOURCE, "user", text)
+    # STATELESS: только system prompt + текущее сообщение, НОЛЬ истории
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": text}]
     result = await chat(messages=messages, task_type="meal_photo", user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)
-    await create_event(
-        user_id=user_id,
-        event_type="meal",
-        bot_source=BOT_SOURCE,
-        raw_text=text,
-        json_data=json_data,
-    )
 
-    display_text = _format_meal_response(result, json_data)
+    # Создаём event ТОЛЬКО если есть КБЖУ данные
+    if json_data and "calories" in json_data:
+        await create_event(
+            user_id=user_id,
+            event_type="meal",
+            bot_source=BOT_SOURCE,
+            raw_text=text,
+            json_data=json_data,
+        )
+
+    display_text = _format_meal_response(result, json_data, user_id)
     await safe_answer(message, display_text, reply_markup=main_keyboard())
-    await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
 async def _process_workout(message: Message, user_id: int, text: str) -> None:
-    """Обработка описания тренировки."""
+    """Обработка описания тренировки — STATELESS."""
     workouts_ctx = await _today_workouts_context(user_id)
     system = TRAINER_SYSTEM.format(
         current_time=_now_str(), today_workouts_context=workouts_ctx,
     )
-    # Минимум истории — вся правда о тренировках в system prompt из БД
-    history = await get_today_messages(user_id, BOT_SOURCE, limit=2)
-    messages = [{"role": "system", "content": system}] + history + [{"role": "user", "content": text}]
-    await save_message(user_id, BOT_SOURCE, "user", text)
+    # STATELESS: только system prompt + текущее сообщение
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": text}]
     result = await chat(messages=messages, task_type="workout_parse", user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)
-    await create_event(
-        user_id=user_id,
-        event_type="workout",
-        bot_source=BOT_SOURCE,
-        raw_text=text,
-        json_data=json_data,
-    )
+
+    if json_data and "exercises" in json_data:
+        await create_event(
+            user_id=user_id,
+            event_type="workout",
+            bot_source=BOT_SOURCE,
+            raw_text=text,
+            json_data=json_data,
+        )
 
     display_text = _format_workout_response(result, json_data)
     await safe_answer(message, display_text, reply_markup=main_keyboard())
-    await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
 async def _process_settings(message: Message, user_id: int, text: str) -> None:
@@ -284,16 +286,36 @@ async def _process_settings(message: Message, user_id: int, text: str) -> None:
     )
 
 
-def _format_meal_response(raw_result: str, json_data: dict | None) -> str:
-    """Формируем красивый ответ: убираем JSON-блок, оставляем текст LLM."""
-    if not json_data or "calories" not in json_data:
-        return raw_result
+def _format_meal_response(raw_result: str, json_data: dict | None, user_id: int = 0) -> str:
+    """Строим красивую карточку КБЖУ из json_data.
 
-    # Убираем JSON-блок из ответа — всё остальное показываем как есть
-    cleaned = re.sub(r'```json\s*\{[^}]*\}\s*```', '', raw_result).strip()
-    # Убираем двойные пустые строки
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    return cleaned or raw_result
+    НЕ полагаемся на текст LLM — он ненадёжен.
+    Карточку строим сами из распарсенного JSON.
+    """
+    if not json_data or "calories" not in json_data:
+        # LLM не дал КБЖУ — показываем текст как есть (вопрос/ответ)
+        cleaned = re.sub(r'```json\s*\{.*?\}\s*```', '', raw_result, flags=re.DOTALL).strip()
+        return cleaned or raw_result
+
+    desc = json_data.get("description", "Блюдо")
+    cal = json_data["calories"]
+    prot = json_data.get("protein", "?")
+    fat = json_data.get("fat", "?")
+    carbs = json_data.get("carbs", "?")
+    comment = json_data.get("comment", "")
+
+    card = (
+        f"\U0001f37d <b>{desc}</b>\n\n"
+        f"\U0001f525 Калории: <b>{cal}</b> ккал\n"
+        f"\U0001f969 Белки: <b>{prot}</b> г\n"
+        f"\U0001f9c8 Жиры: <b>{fat}</b> г\n"
+        f"\U0001f35e Углеводы: <b>{carbs}</b> г"
+    )
+
+    if comment:
+        card += f"\n\n{comment}"
+
+    return card
 
 
 def _format_workout_response(raw_result: str, json_data: dict | None) -> str:
@@ -327,8 +349,8 @@ def _format_workout_response(raw_result: str, json_data: dict | None) -> str:
             pretty += f" — {detail}"
         pretty += "\n"
 
-    # Комментарий LLM
-    comment = re.sub(r'```json\s*.*?\s*```', '', raw_result, flags=re.DOTALL).strip()
+    # Комментарий из json_data
+    comment = json_data.get("comment", "")
     if comment:
         pretty += f"\n{comment}"
     return pretty
