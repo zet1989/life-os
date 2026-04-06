@@ -101,11 +101,31 @@ async def _build_life_context(user_id: int) -> str:
     return "\n".join(lines)
 
 
+async def _build_user_goals(user_id: int) -> str:
+    """Собрать глобальные цели пользователя для контекста."""
+    goals = await get_active_goals(user_id)
+    if not goals:
+        return "Нет активных целей."
+    lines = []
+    for g in goals:
+        goal_type = g.get("type", "")
+        title = g.get("title", "")
+        progress = g.get("progress_pct", 0) or 0
+        emoji = {"🌟": "dream", "🎯": "yearly_goal", "✅": "habit_target"}.get(goal_type, "📌")
+        # Инвертируем маппинг
+        emoji = "🌟" if goal_type == "dream" else "🎯" if goal_type == "yearly_goal" else "✅"
+        lines.append(f"  {emoji} {title} ({progress}%)")
+    return "\n".join(lines)
+
+
 async def _psychology_system(user_id: int) -> str:
     """Собрать полный system prompt для психолога с контекстом жизни."""
     now_str = datetime.now(MSK).strftime("%d.%m.%Y %H:%M")
     life_context = await _build_life_context(user_id)
-    return PSYCHOLOGY_SYSTEM.format(current_time=now_str, life_context=life_context)
+    user_goals = await _build_user_goals(user_id)
+    return PSYCHOLOGY_SYSTEM.format(
+        current_time=now_str, life_context=life_context, user_goals=user_goals,
+    )
 
 
 # === /start ===
@@ -186,10 +206,12 @@ async def mode_retro(message: Message, db_user: dict) -> None:
     processing = await message.answer("⏳ Анализирую записи за неделю...")
 
     system = await _psychology_system(user_id)
+    user_goals = await _build_user_goals(user_id)
+    retro_prompt = RETROSPECTIVE_PROMPT.format(user_goals=user_goals)
     result = await rag_answer(
         query="Мои записи в дневнике и привычки за последнюю неделю",
         user_id=user_id,
-        system_prompt=system + "\n\n" + RETROSPECTIVE_PROMPT,
+        system_prompt=system + "\n\n" + retro_prompt,
         top_k=15,
         bot_source=BOT_SOURCE,
     )

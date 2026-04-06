@@ -23,6 +23,7 @@ from src.bots.health.prompts import (
     NUTRITIONIST_SYSTEM,
     PROFILE_HELP,
     TRAINER_SYSTEM,
+    WIFE_NUTRITIONIST_SYSTEM,
 )
 from src.bots.health.keyboard import main_keyboard, Mode, get_user_mode, set_user_mode
 
@@ -43,8 +44,14 @@ async def _get_user_settings(user_id: int) -> str:
     user = await get_user(user_id)
     overrides = (user or {}).get("system_prompt_overrides") or ""
     if overrides:
-        return f"⚙️ ПЕРСОНАЛЬНЫЕ НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ:\n{overrides}"
-    return "⚙️ ПЕРСОНАЛЬНЫЕ НАСТРОЙКИ: не заданы (используй стандартные нормы)."
+        return f"⚙️ ПЕРСОНАЛЬНЫЙ ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ:\n{overrides}"
+    return "⚙️ ПРОФИЛЬ: не задан (использую стандартные нормы)."
+
+
+async def _is_wife(user_id: int) -> bool:
+    """Проверить, является ли пользователь женой."""
+    user = await get_user(user_id)
+    return (user or {}).get("role") == "wife"
 
 
 async def _today_meals_context(user_id: int) -> str:
@@ -259,7 +266,8 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
     """Обработка текстового описания еды — STATELESS."""
     meals_ctx = await _today_meals_context(user_id)
     settings = await _get_user_settings(user_id)
-    system = NUTRITIONIST_SYSTEM.format(
+    prompt_template = WIFE_NUTRITIONIST_SYSTEM if await _is_wife(user_id) else NUTRITIONIST_SYSTEM
+    system = prompt_template.format(
         current_time=_now_str(),
         today_meals_context=meals_ctx,
         user_settings=settings,
