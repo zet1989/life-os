@@ -18,7 +18,7 @@ from src.ai.router import chat
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer
-from src.db.queries import create_event, get_active_goals, get_cross_bot_summary
+from src.db.queries import create_event, get_active_goals, get_cross_bot_summary, get_life_profile
 from src.bots.psychology.keyboard import (
     Mode,
     get_user_mode,
@@ -55,26 +55,47 @@ BOT_LABELS = {
 async def _build_life_context(user_id: int) -> str:
     """Собрать краткий контекст из всех ботов за последнюю неделю."""
     events = await get_cross_bot_summary(user_id, days=7)
-    if not events:
-        return "Нет данных из других ботов за последнюю неделю."
+
+    # Профиль жизни — авто, дом, активы (без лимита по дате)
+    profile_events = await get_life_profile(user_id)
+
+    if not events and not profile_events:
+        return "Нет данных из других ботов."
 
     lines = []
-    for ev in events[:30]:
-        bot = BOT_LABELS.get(ev["bot_source"], ev["bot_source"])
-        event_type = ev.get("event_type", "")
-        raw = (ev.get("raw_text") or "")[:100]
-        jd = ev.get("json_data") or {}
-        ts = ev.get("timestamp", "")
-        if hasattr(ts, "strftime"):
-            ts = ts.strftime("%d.%m %H:%M")
 
-        detail = raw
-        if event_type == "meal" and jd.get("description"):
-            detail = f"{jd['description']} ({jd.get('calories', '?')} ккал)"
-        elif event_type == "business_task" and jd.get("title"):
-            detail = jd["title"]
+    # Профиль: авто, дом и т.д.
+    if profile_events:
+        lines.append("📌 ПРОФИЛЬ (активы, имущество):")
+        for ev in profile_events:
+            bot = BOT_LABELS.get(ev["bot_source"], ev["bot_source"])
+            raw = (ev.get("raw_text") or "")[:150]
+            jd = ev.get("json_data") or {}
+            detail = jd.get("description") or jd.get("title") or raw
+            lines.append(f"  {bot}: {detail}")
+        lines.append("")
 
-        lines.append(f"[{ts}] {bot} | {event_type}: {detail}")
+    # Последние события за неделю
+    if events:
+        lines.append("📡 СОБЫТИЯ ЗА НЕДЕЛЮ:")
+        for ev in events[:30]:
+            bot = BOT_LABELS.get(ev["bot_source"], ev["bot_source"])
+            event_type = ev.get("event_type", "")
+            raw = (ev.get("raw_text") or "")[:100]
+            jd = ev.get("json_data") or {}
+            ts = ev.get("timestamp", "")
+            if hasattr(ts, "strftime"):
+                ts = ts.strftime("%d.%m %H:%M")
+
+            detail = raw
+            if event_type == "meal" and jd.get("description"):
+                detail = f"{jd['description']} ({jd.get('calories', '?')} ккал)"
+            elif event_type == "business_task" and jd.get("title"):
+                detail = jd["title"]
+            elif event_type == "auto_maintenance" and jd.get("description"):
+                detail = jd["description"]
+
+            lines.append(f"  [{ts}] {bot} | {event_type}: {detail}")
 
     return "\n".join(lines)
 

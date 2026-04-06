@@ -131,6 +131,24 @@ async def get_cross_bot_summary(user_id: int, days: int = 7) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_life_profile(user_id: int) -> list[dict]:
+    """Ключевые события-профиль (авто, дом, здоровье) — без лимита по дате.
+
+    Берём последние записи из assets-бота + ключевые типы из других.
+    """
+    rows = await get_pool().fetch(
+        """SELECT bot_source, event_type, raw_text, json_data, timestamp
+           FROM events
+           WHERE user_id = $1
+             AND (bot_source = 'assets'
+                  OR event_type IN ('family_info', 'health_record'))
+           ORDER BY timestamp DESC
+           LIMIT 20""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
 # === Finances (строгая математика — SQL only) ===
 
 async def create_finance(
@@ -238,6 +256,23 @@ async def get_recent_messages(
     rows = await get_pool().fetch(
         """SELECT role, content FROM conversations
            WHERE user_id = $1 AND bot_source = $2
+           ORDER BY created_at DESC LIMIT $3""",
+        user_id, bot_source, limit,
+    )
+    return [dict(r) for r in reversed(rows)]
+
+
+async def get_today_messages(
+    user_id: int,
+    bot_source: str,
+    limit: int = 20,
+) -> list[dict]:
+    """Сообщения только за СЕГОДНЯ (MSK) для health бота — не тащить вчерашние итоги."""
+    rows = await get_pool().fetch(
+        """SELECT role, content FROM conversations
+           WHERE user_id = $1 AND bot_source = $2
+             AND created_at >= (NOW() AT TIME ZONE 'Europe/Moscow')::date
+                               AT TIME ZONE 'Europe/Moscow'
            ORDER BY created_at DESC LIMIT $3""",
         user_id, bot_source, limit,
     )

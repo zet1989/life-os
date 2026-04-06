@@ -13,7 +13,7 @@ from aiogram.types import Message
 from src.ai.router import chat
 from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
-from src.core.context import build_messages, save_assistant_reply
+from src.core.context import build_messages_today, save_assistant_reply
 from src.utils.telegram import safe_answer
 from src.db.queries import create_event, get_today_meals, get_today_workouts, update_user_settings
 from src.bots.health.prompts import (
@@ -226,7 +226,7 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
     system = NUTRITIONIST_SYSTEM.format(
         current_time=_now_str(), today_meals_context=meals_ctx,
     )
-    messages = await build_messages(user_id, BOT_SOURCE, system, text)
+    messages = await build_messages_today(user_id, BOT_SOURCE, system, text)
     result = await chat(messages=messages, task_type="meal_photo", user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)
@@ -249,7 +249,7 @@ async def _process_workout(message: Message, user_id: int, text: str) -> None:
     system = TRAINER_SYSTEM.format(
         current_time=_now_str(), today_workouts_context=workouts_ctx,
     )
-    messages = await build_messages(user_id, BOT_SOURCE, system, text)
+    messages = await build_messages_today(user_id, BOT_SOURCE, system, text)
     result = await chat(messages=messages, task_type="workout_parse", user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)

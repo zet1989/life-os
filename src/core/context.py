@@ -4,7 +4,7 @@ Sliding window: последние N сообщений из таблицы conv
 Формирует messages[] для отправки в LLM.
 """
 
-from src.db.queries import get_recent_messages, save_message, get_user
+from src.db.queries import get_recent_messages, get_today_messages, save_message, get_user
 
 
 async def build_messages(
@@ -38,6 +38,36 @@ async def build_messages(
     messages.append({"role": "user", "content": user_text})
 
     # Сохраняем сообщение юзера в историю
+    await save_message(user_id, bot_source, "user", user_text)
+
+    return messages
+
+
+async def build_messages_today(
+    user_id: int,
+    bot_source: str,
+    system_prompt: str,
+    user_text: str,
+    limit: int = 20,
+) -> list[dict[str, str]]:
+    """Как build_messages, но история ТОЛЬКО за сегодня (MSK).
+
+    Используется для health бота, чтобы не тащить вчерашние итоги калорий.
+    """
+    user = await get_user(user_id)
+    overrides = (user or {}).get("system_prompt_overrides") or ""
+
+    full_system = system_prompt
+    if overrides:
+        full_system += f"\n\nДополнительные настройки пользователя:\n{overrides}"
+
+    messages: list[dict[str, str]] = [{"role": "system", "content": full_system}]
+
+    history = await get_today_messages(user_id, bot_source, limit=limit)
+    messages.extend(history)
+
+    messages.append({"role": "user", "content": user_text})
+
     await save_message(user_id, bot_source, "user", user_text)
 
     return messages
