@@ -13,12 +13,15 @@ from aiogram.types import Message
 from src.ai.router import chat
 from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
+from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer
 from src.db.queries import create_event, get_today_meals, get_today_workouts, get_user, update_user_settings
 from src.bots.health.prompts import (
+    DOCTOR_PHOTO_PROMPT,
+    DOCTOR_SYSTEM,
     MEAL_PHOTO_PROMPT,
     NUTRITIONIST_SYSTEM,
-    SETTINGS_HELP,
+    PROFILE_HELP,
     TRAINER_SYSTEM,
 )
 from src.bots.health.keyboard import main_keyboard, Mode, get_user_mode, set_user_mode
@@ -99,10 +102,11 @@ async def cmd_start(message: Message, db_user: dict) -> None:
     name = db_user.get("display_name") or message.from_user.first_name  # type: ignore[union-attr]
     await message.answer(
         f"Привет, {name}! 👋\n"
-        f"Я твой AI-нутрициолог и тренер.\n\n"
-        f"📸 Отправь фото еды — посчитаю КБЖУ\n"
-        f"🏋️ Напиши или надиктуй тренировку\n"
-        f"⚙️ Настройки — задай свои параметры",
+        f"Я твой AI-нутрициолог, тренер и доктор.\n\n"
+        f"🍽 Еда — фото или текст → КБЖУ + советы\n"
+        f"🏋️ Тренировка — лог и анализ\n"
+        f"🩺 Доктор — медицинские вопросы\n"
+        f"📋 Мой профиль — расскажи о себе",
         reply_markup=main_keyboard(),
     )
 
@@ -131,18 +135,33 @@ async def mode_workout(message: Message) -> None:
     )
 
 
-@router.message(F.text == "⚙️ Настройки")
-async def mode_settings(message: Message) -> None:
-    set_user_mode(message.from_user.id, Mode.SETTINGS)  # type: ignore[union-attr]
-    await message.answer(SETTINGS_HELP, reply_markup=main_keyboard())
+@router.message(F.text == "📋 Мой профиль")
+async def mode_profile(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.PROFILE)
+    await _show_profile(message, user_id)
 
 
-# === /settings ===
+@router.message(F.text == "🩺 Доктор")
+async def mode_doctor(message: Message) -> None:
+    set_user_mode(message.from_user.id, Mode.DOCTOR)  # type: ignore[union-attr]
+    await message.answer(
+        "🩺 Режим <b>Доктор</b>.\n"
+        "Я твой личный врач-терапевт.\n\n"
+        "Опиши симптомы, задай вопрос о здоровье,\n"
+        "пришли результаты анализов (фото или текст).\n\n"
+        "💊 Учитываю твой профиль, болезни и питание.",
+        reply_markup=main_keyboard(),
+    )
+
+
+# === /settings (backward compat) ===
 
 @router.message(Command("settings"))
-async def cmd_settings(message: Message) -> None:
-    set_user_mode(message.from_user.id, Mode.SETTINGS)  # type: ignore[union-attr]
-    await message.answer(SETTINGS_HELP, reply_markup=main_keyboard())
+async def cmd_settings(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.PROFILE)
+    await _show_profile(message, user_id)
 
 
 # === Фото → КБЖУ ===
@@ -150,6 +169,12 @@ async def cmd_settings(message: Message) -> None:
 @router.message(F.photo)
 async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
+
+    # Доктор — фото анализов, симптомов, лекарств
+    if get_user_mode(user_id) == Mode.DOCTOR:
+        await _process_doctor_photo(message, bot, user_id)
+        return
+
     processing = await message.answer("⏳ Анализирую фото...")
 
     photo = message.photo[-1]  # самое большое разрешение
@@ -202,8 +227,10 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
     mode = get_user_mode(user_id)
     if mode == Mode.WORKOUT:
         await _process_workout(message, user_id, text)
-    elif mode == Mode.SETTINGS:
-        await _process_settings(message, user_id, text)
+    elif mode == Mode.DOCTOR:
+        await _process_doctor(message, user_id, text)
+    elif mode == Mode.PROFILE:
+        await _process_profile(message, user_id, text)
     else:
         await _process_food_text(message, user_id, text)
 
@@ -218,8 +245,10 @@ async def handle_text(message: Message, db_user: dict) -> None:
     mode = get_user_mode(user_id)
     if mode == Mode.WORKOUT:
         await _process_workout(message, user_id, text)
-    elif mode == Mode.SETTINGS:
-        await _process_settings(message, user_id, text)
+    elif mode == Mode.DOCTOR:
+        await _process_doctor(message, user_id, text)
+    elif mode == Mode.PROFILE:
+        await _process_profile(message, user_id, text)
     else:
         await _process_food_text(message, user_id, text)
 
@@ -280,16 +309,83 @@ async def _process_workout(message: Message, user_id: int, text: str) -> None:
     await safe_answer(message, display_text, reply_markup=main_keyboard())
 
 
-async def _process_settings(message: Message, user_id: int, text: str) -> None:
-    """Сохранение настроек юзера (калории, диета, витамины)."""
+async def _process_profile(message: Message, user_id: int, text: str) -> None:
+    """Сохранение профиля пользователя."""
     await update_user_settings(user_id, text)
-    set_user_mode(user_id, Mode.FOOD)  # возвращаем в режим еды
+    set_user_mode(user_id, Mode.FOOD)
 
     await message.answer(
-        "✅ Настройки обновлены! Буду учитывать.\n\n"
-        f"<i>{text}</i>",
+        "✅ Профиль обновлён!\n\n"
+        f"<i>{text[:500]}</i>\n\n"
+        "Буду учитывать во всех рекомендациях.\n"
+        "Профиль общий для 🏥 Здоровье и 🧠 Психолог.",
         reply_markup=main_keyboard(),
     )
+
+
+async def _show_profile(message: Message, user_id: int) -> None:
+    """Показать текущий профиль пользователя."""
+    user = await get_user(user_id)
+    overrides = (user or {}).get("system_prompt_overrides") or ""
+    if overrides:
+        text = (
+            "📋 <b>Мой профиль</b>\n\n"
+            f"{overrides}\n\n"
+            "━━━━━━━━━━━━━━━\n"
+            "Чтобы обновить — просто напиши новый текст.\n"
+            "Профиль общий для 🏥 Здоровье и 🧠 Психолог."
+        )
+    else:
+        text = PROFILE_HELP
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+async def _process_doctor(message: Message, user_id: int, text: str) -> None:
+    """Обработка запроса к доктору — с историей, на gpt-4o."""
+    meals_ctx = await _today_meals_context(user_id)
+    workouts_ctx = await _today_workouts_context(user_id)
+    profile = await _get_user_settings(user_id)
+    system = DOCTOR_SYSTEM.format(
+        current_time=_now_str(),
+        today_meals_context=meals_ctx,
+        today_workouts_context=workouts_ctx,
+        user_profile=profile,
+    )
+    messages = await build_messages(
+        user_id=user_id,
+        bot_source=BOT_SOURCE,
+        system_prompt=system,
+        user_text=text,
+    )
+    result = await chat(
+        messages=messages,
+        task_type="doctor_consult",
+        user_id=user_id,
+        bot_source=BOT_SOURCE,
+    )
+    await safe_answer(message, result, reply_markup=main_keyboard())
+    await save_assistant_reply(user_id, BOT_SOURCE, result)
+
+
+async def _process_doctor_photo(message: Message, bot: Bot, user_id: int) -> None:
+    """Анализ фото для доктора (анализы, симптомы, лекарства)."""
+    processing = await message.answer("⏳ Анализирую...")
+    photo = message.photo[-1]
+    profile = await _get_user_settings(user_id)
+    prompt = DOCTOR_PHOTO_PROMPT.format(user_profile=profile)
+
+    result = await analyze_photo(
+        bot=bot,
+        photo=photo,
+        prompt=prompt,
+        task_type="doctor_consult",
+        user_id=user_id,
+        bot_source=BOT_SOURCE,
+    )
+
+    await processing.delete()
+    await safe_answer(message, result, reply_markup=main_keyboard())
+    await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
 def _format_meal_response(raw_result: str, json_data: dict | None, user_id: int = 0) -> str:

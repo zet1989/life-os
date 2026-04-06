@@ -18,7 +18,7 @@ from src.ai.router import chat
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer
-from src.db.queries import create_event, get_active_goals, get_cross_bot_summary, get_life_profile
+from src.db.queries import create_event, get_active_goals, get_cross_bot_summary, get_life_profile, get_user, update_user_settings
 from src.bots.psychology.keyboard import (
     Mode,
     get_user_mode,
@@ -31,6 +31,7 @@ from src.bots.psychology.prompts import (
     DIARY_PROMPT,
     HABIT_CHECK_PROMPT,
     MOOD_LABELS,
+    PSY_PROFILE_HELP,
     PSYCHOLOGY_SYSTEM,
     RETROSPECTIVE_PROMPT,
 )
@@ -119,7 +120,8 @@ async def cmd_start(message: Message, db_user: dict) -> None:
         f"🎙 Голос — надиктовать запись\n"
         f"✅ Привычки — отметить прогресс\n"
         f"😊 Настроение — оценить день\n"
-        f"🔮 Ретроспектива — анализ за неделю\n\n"
+        f"🔮 Ретроспектива — анализ за неделю\n"
+        f"📋 Мой профиль — расскажи о себе\n\n"
         f"Просто напиши или надиктуй — всё попадёт в дневник.",
         reply_markup=main_keyboard(),
     )
@@ -203,6 +205,13 @@ async def mode_add_habit(message: Message, db_user: dict) -> None:
         "✏️ Напиши название новой привычки:",
         reply_markup=main_keyboard(),
     )
+
+
+@router.message(F.text == "📋 Мой профиль")
+async def mode_profile(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.PROFILE)
+    await _show_profile_psy(message, user_id)
 
 
 # === /add_habit ===
@@ -370,6 +379,11 @@ async def handle_text(message: Message, db_user: dict) -> None:
         )
         return
 
+    # Режим «Профиль» — сохраняем описание пользователя
+    if get_user_mode(user_id) == Mode.PROFILE:
+        await _process_profile_psy(message, user_id, text)
+        return
+
     await _process_diary(message, user_id, text)
 
 
@@ -405,3 +419,36 @@ async def _process_diary(message: Message, user_id: int, text: str) -> None:
 
     await safe_answer(message, reply, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, reply)
+
+
+# === Профиль ===
+
+async def _show_profile_psy(message: Message, user_id: int) -> None:
+    """Показать текущий профиль пользователя."""
+    user = await get_user(user_id)
+    overrides = (user or {}).get("system_prompt_overrides") or ""
+    if overrides:
+        text = (
+            "📋 <b>Мой профиль</b>\n\n"
+            f"{overrides}\n\n"
+            "━━━━━━━━━━━━━━━\n"
+            "Чтобы обновить — просто напиши новый текст.\n"
+            "Профиль общий для 🏥 Здоровье и 🧠 Психолог."
+        )
+    else:
+        text = PSY_PROFILE_HELP
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+async def _process_profile_psy(message: Message, user_id: int, text: str) -> None:
+    """Сохранение профиля пользователя."""
+    await update_user_settings(user_id, text)
+    set_user_mode(user_id, Mode.DIARY)
+
+    await message.answer(
+        "✅ Профиль обновлён!\n\n"
+        f"<i>{text[:500]}</i>\n\n"
+        "Буду учитывать в терапевтической работе.\n"
+        "Профиль общий для 🏥 Здоровье и 🧠 Психолог.",
+        reply_markup=main_keyboard(),
+    )

@@ -11,7 +11,8 @@ _user_modes: dict[int, "Mode"] = {}
 class Mode(StrEnum):
     FOOD = "food"
     WORKOUT = "workout"
-    SETTINGS = "settings"
+    DOCTOR = "doctor"
+    PROFILE = "profile"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -19,7 +20,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🍽 Еда"), KeyboardButton(text="🏋️ Тренировка")],
-            [KeyboardButton(text="⚙️ Настройки")],
+            [KeyboardButton(text="🩺 Доктор"), KeyboardButton(text="📋 Мой профиль")],
         ],
         resize_keyboard=True,
     )

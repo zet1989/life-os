@@ -62,7 +62,7 @@ def _pick_model(paid_model: str, task_type: str) -> tuple[str, bool]:
     Returns: (model_name, is_free)
     """
     # Для critical task_types всегда используем платную
-    critical_tasks = {"master_audit", "business_strategy"}
+    critical_tasks = {"master_audit", "business_strategy", "doctor_consult"}
     if task_type in critical_tasks:
         return paid_model, False
 
@@ -86,6 +86,13 @@ async def get_model_config(task_type: str) -> dict:
                 "model": "openai/gpt-4o",
                 "max_tokens": 2000,
                 "temperature": 0.4,
+                "fallback_model": "openai/gpt-4o-mini",
+            }
+        elif task_type == "doctor_consult":
+            config = {
+                "model": "openai/gpt-4o",
+                "max_tokens": 2000,
+                "temperature": 0.3,
                 "fallback_model": "openai/gpt-4o-mini",
             }
         else:
