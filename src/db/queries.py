@@ -149,6 +149,24 @@ async def get_life_profile(user_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_meals_range(
+    user_id: int,
+    date_from: str,
+    date_to: str,
+    bot_source: str = "health",
+) -> list[dict]:
+    """Приёмы пищи за диапазон дат (ISO-строки YYYY-MM-DD)."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM events
+           WHERE user_id = $1 AND event_type = 'meal' AND bot_source = $2
+             AND timestamp >= $3::date
+             AND timestamp < ($4::date + INTERVAL '1 day')
+           ORDER BY timestamp ASC""",
+        user_id, bot_source, date_from, date_to,
+    )
+    return [dict(r) for r in rows]
+
+
 # === Finances (строгая математика — SQL only) ===
 
 async def create_finance(

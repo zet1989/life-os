@@ -15,7 +15,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd ~/life-os
+            cd /opt/life-os
             git pull origin main
             docker compose build --no-cache bot
             docker compose up -d
