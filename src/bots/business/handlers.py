@@ -18,6 +18,7 @@ from src.db.queries import (
     create_finance,
     create_project,
     get_finance_summary,
+    get_project,
     get_projects_by_type,
 )
 from src.bots.business.keyboard import (
@@ -30,16 +31,28 @@ from src.bots.business.keyboard import (
     set_user_mode,
 )
 from src.bots.business.prompts import (
-    BUSINESS_SYSTEM,
     IDEA_PROMPT,
     REPORT_HEADER,
     TASK_PROMPT,
+    build_business_system,
 )
 
 logger = structlog.get_logger()
 router = Router()
 
 BOT_SOURCE = "business"
+
+
+async def _get_project_system(project_id: int) -> str:
+    """Собрать system prompt c учётом per-project промпта из metadata."""
+    proj = await get_project(project_id)
+    if proj:
+        meta = proj.get("metadata") or {}
+        return build_business_system(
+            project_name=proj.get("name"),
+            project_prompt=meta.get("system_prompt"),
+        )
+    return build_business_system()
 
 
 # === /start ===
@@ -194,14 +207,15 @@ async def _attach_to_project(callback: CallbackQuery, user_id: int, project_id: 
     if mode == Mode.TASK:
         system = TASK_PROMPT
         event_type = "business_task"
-        task_type = "general_chat"
+        task_type = "business_strategy"
     else:
         system = IDEA_PROMPT
         event_type = "business_task"
-        task_type = "general_chat"
+        task_type = "business_strategy"
 
+    base_system = await _get_project_system(project_id)
     messages = [
-        {"role": "system", "content": BUSINESS_SYSTEM + "\n\n" + system},
+        {"role": "system", "content": base_system + "\n\n" + system},
         {"role": "user", "content": text},
     ]
     result = await chat(messages=messages, task_type=task_type, user_id=user_id, bot_source=BOT_SOURCE)
@@ -357,11 +371,12 @@ async def _attach_to_project_direct(
     mode = get_user_mode(user_id)
     system = TASK_PROMPT if mode == Mode.TASK else IDEA_PROMPT
 
+    base_system = await _get_project_system(project_id)
     messages = [
-        {"role": "system", "content": BUSINESS_SYSTEM + "\n\n" + system},
+        {"role": "system", "content": base_system + "\n\n" + system},
         {"role": "user", "content": text},
     ]
-    result = await chat(messages=messages, task_type="general_chat", user_id=user_id, bot_source=BOT_SOURCE)
+    result = await chat(messages=messages, task_type="business_strategy", user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)
     event = await create_event(

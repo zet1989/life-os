@@ -3,8 +3,10 @@
 Выбор модели по task_type из таблицы model_routing.
 Retry с exponential backoff через tenacity.
 Логирование расходов через cost_tracker.
+Поддержка бесплатных моделей: пока лимит не исчерпан — бесплатная, потом платная.
 """
 
+from datetime import date
 from typing import Any
 
 import httpx
@@ -23,6 +25,53 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # Кэш маршрутов моделей (чтобы не ходить в БД каждый раз)
 _model_cache: dict[str, dict] = {}
 
+# Счётчик бесплатных запросов за день
+_free_request_counter: dict[str, int] = {}  # key: "YYYY-MM-DD", value: count
+FREE_DAILY_LIMIT = getattr(settings, "free_model_daily_limit", 45)
+
+# Маппинг: платная модель → бесплатный аналог
+FREE_MODEL_MAP: dict[str, str] = {
+    "gpt-4o-mini": "meta-llama/llama-3.1-8b-instruct:free",
+    "gpt-4o": "meta-llama/llama-3.3-70b-instruct:free",
+    "claude-3.5-sonnet": "meta-llama/llama-3.3-70b-instruct:free",
+    "anthropic/claude-3.5-sonnet": "meta-llama/llama-3.3-70b-instruct:free",
+    "openai/gpt-4o-mini": "meta-llama/llama-3.1-8b-instruct:free",
+    "openai/gpt-4o": "meta-llama/llama-3.3-70b-instruct:free",
+}
+
+
+def _get_free_count_today() -> int:
+    """Количество бесплатных запросов за сегодня."""
+    today = date.today().isoformat()
+    return _free_request_counter.get(today, 0)
+
+
+def _increment_free_count() -> None:
+    """Увеличить счётчик бесплатных запросов."""
+    today = date.today().isoformat()
+    # Очищаем старые дни
+    for key in list(_free_request_counter.keys()):
+        if key != today:
+            del _free_request_counter[key]
+    _free_request_counter[today] = _free_request_counter.get(today, 0) + 1
+
+
+def _pick_model(paid_model: str, task_type: str) -> tuple[str, bool]:
+    """Выбрать модель: бесплатную (если лимит не исчерпан) или платную.
+
+    Returns: (model_name, is_free)
+    """
+    # Для critical task_types всегда используем платную
+    critical_tasks = {"master_audit", "business_strategy"}
+    if task_type in critical_tasks:
+        return paid_model, False
+
+    free_model = FREE_MODEL_MAP.get(paid_model)
+    if free_model and _get_free_count_today() < FREE_DAILY_LIMIT:
+        return free_model, True
+
+    return paid_model, False
+
 
 async def get_model_config(task_type: str) -> dict:
     """Получить конфиг модели для task_type из таблицы model_routing."""
@@ -31,12 +80,21 @@ async def get_model_config(task_type: str) -> dict:
 
     config = await _db_get_model_config(task_type)
     if config is None:
-        config = {
-            "model": "gpt-4o-mini",
-            "max_tokens": 1000,
-            "temperature": 0.5,
-            "fallback_model": None,
-        }
+        # Для бизнес-задач по умолчанию умная модель
+        if task_type == "business_strategy":
+            config = {
+                "model": "openai/gpt-4o",
+                "max_tokens": 2000,
+                "temperature": 0.4,
+                "fallback_model": "openai/gpt-4o-mini",
+            }
+        else:
+            config = {
+                "model": "gpt-4o-mini",
+                "max_tokens": 1000,
+                "temperature": 0.5,
+                "fallback_model": None,
+            }
     _model_cache[task_type] = config
     return config
 
@@ -97,15 +155,24 @@ async def chat(
         return f"⚠️ {e}"
 
     config = await get_model_config(task_type)
-    model = config["model"]
+    paid_model = config["model"]
     max_tokens = config.get("max_tokens") or 1000
     temperature = float(config.get("temperature") or 0.5)
     fallback = config.get("fallback_model")
 
+    model, is_free = _pick_model(paid_model, task_type)
+
     try:
         data = await _call_openrouter(model, messages, max_tokens, temperature)
+        if is_free:
+            _increment_free_count()
     except Exception:
-        if fallback:
+        # Если бесплатная модель упала — пробуем платную
+        if is_free:
+            logger.warning("free_model_failed_fallback_to_paid", free=model, paid=paid_model)
+            data = await _call_openrouter(paid_model, messages, max_tokens, temperature)
+            model = paid_model
+        elif fallback:
             logger.warning("model_fallback", primary=model, fallback=fallback, task=task_type)
             data = await _call_openrouter(fallback, messages, max_tokens, temperature)
             model = fallback

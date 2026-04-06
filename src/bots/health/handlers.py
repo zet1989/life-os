@@ -2,6 +2,8 @@
 
 import json
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import structlog
 from aiogram import Bot, F, Router
@@ -13,7 +15,7 @@ from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer
-from src.db.queries import create_event, update_user_settings
+from src.db.queries import create_event, get_today_meals, get_today_workouts, update_user_settings
 from src.bots.health.prompts import (
     MEAL_PHOTO_PROMPT,
     NUTRITIONIST_SYSTEM,
@@ -26,6 +28,60 @@ logger = structlog.get_logger()
 router = Router()
 
 BOT_SOURCE = "health"
+MSK = ZoneInfo("Europe/Moscow")
+
+
+def _now_str() -> str:
+    """Текущее время в MSK для промптов."""
+    return datetime.now(MSK).strftime("%d.%m.%Y %H:%M")
+
+
+async def _today_meals_context(user_id: int) -> str:
+    """Собрать контекст сегодняшних приёмов пищи из БД."""
+    meals = await get_today_meals(user_id, bot_source="health")
+    if not meals:
+        return "📋 СЪЕДЕНО СЕГОДНЯ: ничего не записано."
+
+    lines = []
+    total_cal, total_prot, total_fat, total_carbs = 0, 0, 0, 0
+    for i, m in enumerate(meals, 1):
+        jd = m.get("json_data") or {}
+        desc = jd.get("description") or (m.get("raw_text") or "")[:60]
+        cal = jd.get("calories", 0) or 0
+        prot = jd.get("protein", 0) or 0
+        fat = jd.get("fat", 0) or 0
+        carbs = jd.get("carbs", 0) or 0
+        lines.append(f"{i}. {desc} — {cal} ккал (Б:{prot} Ж:{fat} У:{carbs})")
+        total_cal += cal
+        total_prot += prot
+        total_fat += fat
+        total_carbs += carbs
+
+    header = f"📋 СЪЕДЕНО СЕГОДНЯ ({len(meals)} приёмов):"
+    footer = f"ИТОГО за сегодня: {total_cal} ккал, Б:{total_prot} Ж:{total_fat} У:{total_carbs}"
+    return header + "\n" + "\n".join(lines) + "\n" + footer
+
+
+async def _today_workouts_context(user_id: int) -> str:
+    """Собрать контекст сегодняшних тренировок из БД."""
+    workouts = await get_today_workouts(user_id, bot_source="health")
+    if not workouts:
+        return "🏋️ ТРЕНИРОВКИ СЕГОДНЯ: нет записей."
+
+    lines = []
+    for i, w in enumerate(workouts, 1):
+        jd = w.get("json_data") or {}
+        raw = (w.get("raw_text") or "")[:80]
+        wtype = jd.get("type", "")
+        dur = jd.get("duration_min", "")
+        desc = raw
+        if wtype and dur:
+            desc = f"{wtype}, {dur} мин"
+        elif dur:
+            desc = f"{dur} мин"
+        lines.append(f"{i}. {desc}")
+
+    return f"🏋️ ТРЕНИРОВКИ СЕГОДНЯ ({len(workouts)} шт.):\n" + "\n".join(lines)
 
 
 # === /start ===
@@ -166,7 +222,11 @@ async def handle_text(message: Message, db_user: dict) -> None:
 
 async def _process_food_text(message: Message, user_id: int, text: str) -> None:
     """Обработка текстового описания еды."""
-    messages = await build_messages(user_id, BOT_SOURCE, NUTRITIONIST_SYSTEM, text)
+    meals_ctx = await _today_meals_context(user_id)
+    system = NUTRITIONIST_SYSTEM.format(
+        current_time=_now_str(), today_meals_context=meals_ctx,
+    )
+    messages = await build_messages(user_id, BOT_SOURCE, system, text)
     result = await chat(messages=messages, task_type="meal_photo", user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)
@@ -185,7 +245,11 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
 
 async def _process_workout(message: Message, user_id: int, text: str) -> None:
     """Обработка описания тренировки."""
-    messages = await build_messages(user_id, BOT_SOURCE, TRAINER_SYSTEM, text)
+    workouts_ctx = await _today_workouts_context(user_id)
+    system = TRAINER_SYSTEM.format(
+        current_time=_now_str(), today_workouts_context=workouts_ctx,
+    )
+    messages = await build_messages(user_id, BOT_SOURCE, system, text)
     result = await chat(messages=messages, task_type="workout_parse", user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)

@@ -20,6 +20,7 @@ from src.ai.whisper import transcribe_voice
 from src.core.context import save_assistant_reply
 from src.db.queries import (
     create_finance,
+    create_project,
     get_finance_summary,
     get_projects_by_type,
 )
@@ -44,6 +45,18 @@ logger = structlog.get_logger()
 router = Router()
 
 BOT_SOURCE = "family"
+
+
+async def _ensure_family_project(user_id: int) -> list[dict]:
+    """Получить семейные проекты, создать если нет ни одного."""
+    projects = await get_projects_by_type(user_id, "family")
+    if not projects:
+        proj = await create_project(
+            user_id, "Семейный бюджет", project_type="family",
+        )
+        logger.info("auto_created_family_project", user_id=user_id, project_id=proj["project_id"])
+        projects = [proj]
+    return projects
 
 
 # === Privacy mode: в группах реагируем только на @mention или reply ===
@@ -105,11 +118,7 @@ async def mode_income(message: Message) -> None:
 async def mode_report(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     set_user_mode(user_id, Mode.REPORT)
-    projects = await get_projects_by_type(user_id, "family")
-
-    if not projects:
-        await message.answer("Нет семейных проектов.", reply_markup=main_keyboard())
-        return
+    projects = await _ensure_family_project(user_id)
 
     if len(projects) == 1:
         await _send_report(message, projects[0]["project_id"], projects[0]["name"])
@@ -124,11 +133,7 @@ async def mode_report(message: Message, db_user: dict) -> None:
 async def mode_categories(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     set_user_mode(user_id, Mode.CATEGORIES)
-    projects = await get_projects_by_type(user_id, "family")
-
-    if not projects:
-        await message.answer("Нет семейных проектов.", reply_markup=main_keyboard())
-        return
+    projects = await _ensure_family_project(user_id)
 
     if len(projects) == 1:
         await _send_categories(message, projects[0]["project_id"])
@@ -367,30 +372,26 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
 
     parsed = _extract_json(result)
     if parsed and "amount" in parsed:
-        # Привязываем к family-проекту
-        projects = await get_projects_by_type(user_id, "family")
-        if projects:
-            project_id = projects[0]["project_id"]
-            await create_finance(
-                user_id=user_id,
-                project_id=project_id,
-                transaction_type="expense",
-                amount=parsed["amount"],
-                category=parsed.get("category", "продукты"),
-                description=parsed.get("description", parsed.get("shop", "")),
-            )
-            confirm = (
-                f"🧾 Чек распознан!\n"
-                f"💰 Сумма: <b>{parsed['amount']:,.0f} ₽</b>\n"
-                f"Категория: {parsed.get('category', '—')}\n"
-                f"Магазин: {parsed.get('shop', '—')}"
-            )
-            limit_warning = await _check_budget_limit(project_id, parsed.get("category", ""))
-            if limit_warning:
-                confirm += f"\n\n{limit_warning}"
-            await processing.edit_text(confirm)
-        else:
-            await processing.edit_text("Нет семейных проектов для записи расхода.")
+        projects = await _ensure_family_project(user_id)
+        project_id = projects[0]["project_id"]
+        await create_finance(
+            user_id=user_id,
+            project_id=project_id,
+            transaction_type="expense",
+            amount=parsed["amount"],
+            category=parsed.get("category", "продукты"),
+            description=parsed.get("description", parsed.get("shop", "")),
+        )
+        confirm = (
+            f"🧾 Чек распознан!\n"
+            f"💰 Сумма: <b>{parsed['amount']:,.0f} ₽</b>\n"
+            f"Категория: {parsed.get('category', '—')}\n"
+            f"Магазин: {parsed.get('shop', '—')}"
+        )
+        limit_warning = await _check_budget_limit(project_id, parsed.get("category", ""))
+        if limit_warning:
+            confirm += f"\n\n{limit_warning}"
+        await processing.edit_text(confirm)
     else:
         await safe_edit(processing, result)
 
@@ -438,14 +439,7 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
         return
 
     transaction_type = "expense" if mode == Mode.EXPENSE else "income"
-    projects = await get_projects_by_type(user_id, "family")
-
-    if not projects:
-        await message.answer(
-            "Нет семейных проектов. Попроси админа создать.",
-            reply_markup=main_keyboard(),
-        )
-        return
+    projects = await _ensure_family_project(user_id)
 
     if len(projects) == 1:
         set_pending(user_id, text, transaction_type)

@@ -49,5 +49,8 @@ class Settings(BaseSettings):
     api_daily_limit_usd: float = 2.0
     api_monthly_limit_usd: float = 20.0
 
+    # --- Free model limits ---
+    free_model_daily_limit: int = 950  # запросов бесплатных моделей в день (с запасом от 1000 при $10+)
+
 
 settings = Settings()  # type: ignore[call-arg]

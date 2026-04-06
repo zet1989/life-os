@@ -1,20 +1,32 @@
 """Планировщик дневной сводки КБЖУ для бота Health."""
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import structlog
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from src.ai.router import chat
-from src.db.queries import get_active_user_ids, get_recent_events
+from src.db.queries import get_active_user_ids, get_today_meals
 
 logger = structlog.get_logger()
 
+MSK = ZoneInfo("Europe/Moscow")
+
 SUMMARY_PROMPT = (
-    "Проанализируй питание пользователя за сегодня. "
-    "Подведи итого по КБЖУ (калории, белки, жиры, углеводы). "
-    "Если данных мало — отметь это. "
-    "Дай краткую рекомендацию. Формат: текст, без JSON."
+    "Ты — нутрициолог. Проанализируй питание пользователя за сегодня.\n\n"
+    "Тебе даны ВСЕ приёмы пищи с точными КБЖУ (калории, белки, жиры, углеводы).\n"
+    "Твоя задача:\n"
+    "1. Перечислить КАЖДОЕ блюдо (ни одно не пропускай!).\n"
+    "2. Показать КБЖУ по каждому блюду.\n"
+    "3. Посчитать ИТОГО КБЖУ за день (суммируй из предоставленных данных).\n"
+    "4. Сравнить с нормой пользователя или ≈2000-2500 ккал для мужчины.\n"
+    "5. Дать краткую рекомендацию.\n\n"
+    "ВАЖНО: Используй ТОЛЬКО данные из списка ниже. "
+    "Не пропускай блюда. Не путай описания. Не придумывай блюда.\n"
+    "Формат: текст, без JSON."
 )
 
 
@@ -29,26 +41,55 @@ async def send_daily_summary(bot: Bot) -> None:
 
 
 async def _send_summary_to_user(bot: Bot, user_id: int) -> None:
-    """Сводка для одного юзера."""
+    """Сводка для одного юзера — на основе json_data за сегодня."""
     try:
-        meals = await get_recent_events(
-            user_id=user_id,
-            event_type="meal",
-            bot_source="health",
-            limit=20,
-        )
+        meals = await get_today_meals(user_id=user_id, bot_source="health")
 
         if not meals:
-            return  # Нет данных — не беспокоим
+            return
 
-        # Собираем сводку из всех приёмов пищи
-        meals_text = "\n".join(
-            f"- {m.get('raw_text', '')}" for m in meals
+        meals_lines = []
+        total_cal, total_prot, total_fat, total_carbs = 0, 0, 0, 0
+
+        for i, m in enumerate(meals, 1):
+            jd = m.get("json_data") or {}
+            desc = jd.get("description") or m.get("raw_text", "Неизвестное блюдо")[:80]
+            cal = jd.get("calories", 0) or 0
+            prot = jd.get("protein", 0) or 0
+            fat = jd.get("fat", 0) or 0
+            carbs = jd.get("carbs", 0) or 0
+
+            meals_lines.append(
+                f"{i}. {desc}\n"
+                f"   - Калории: {cal}\n"
+                f"   - Белки: {prot} г\n"
+                f"   - Жиры: {fat} г\n"
+                f"   - Углеводы: {carbs} г"
+            )
+            total_cal += cal
+            total_prot += prot
+            total_fat += fat
+            total_carbs += carbs
+
+        meals_text = "\n\n".join(meals_lines)
+        totals = (
+            f"\n\nСУММАРНО за день: Калории={total_cal}, "
+            f"Белки={total_prot} г, Жиры={total_fat} г, Углеводы={total_carbs} г"
         )
+
+        now = datetime.now(MSK)
+        date_str = now.strftime("%d.%m.%Y")
 
         messages = [
             {"role": "system", "content": SUMMARY_PROMPT},
-            {"role": "user", "content": f"Приёмы пищи за сегодня:\n{meals_text}"},
+            {
+                "role": "user",
+                "content": (
+                    f"Дата: {date_str}\n"
+                    f"Приёмы пищи за сегодня ({len(meals)} шт.):\n\n"
+                    f"{meals_text}{totals}"
+                ),
+            },
         ]
 
         result = await chat(
@@ -69,7 +110,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(
         send_daily_summary,
-        trigger=CronTrigger(hour=21, minute=0),
+        trigger=CronTrigger(hour=21, minute=0, timezone=MSK),
         args=[bot],
         id="daily_kbzhu_summary",
         replace_existing=True,

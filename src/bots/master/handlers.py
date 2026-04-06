@@ -2,11 +2,13 @@
 
 Доступ: только admin (Алексей). Это центр управления всей экосистемой.
 Хранитель Видения: перед каждым ответом — goals в system prompt.
-Финансовая панорама: агрегация ВСЕХ финансов (SQL only).
-Перекрёстный RAG: доступ ко всем ботам.
+Кросс-бот контекст: видит историю ВСЕХ ботов.
+Управление промптами и моделями.
 """
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import structlog
 from aiogram import Bot, F, Router
@@ -15,21 +17,26 @@ from aiogram.types import FSInputFile, Message
 from src.utils.telegram import safe_answer, safe_edit
 
 from src.ai.rag import rag_answer, search, store_event_embedding
-from src.ai.router import chat
+from src.ai.router import chat, _get_free_count_today, FREE_DAILY_LIMIT, get_model_config
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.db.queries import (
     create_event,
     create_goal,
     get_active_goals,
+    get_cross_bot_summary,
     get_finance_summary,
+    get_project,
     get_user_projects,
     update_goal,
+    update_project_metadata,
 )
 from src.bots.master.keyboard import (
     Mode,
     get_user_mode,
     main_keyboard,
+    pop_pending_prompt_project,
+    set_pending_prompt_project,
     set_user_mode,
 )
 from src.bots.master.prompts import (
@@ -45,24 +52,55 @@ logger = structlog.get_logger()
 router = Router()
 
 BOT_SOURCE = "master"
+MSK = ZoneInfo("Europe/Moscow")
+
+BOT_LABELS = {
+    "health": "🏥 Здоровье",
+    "assets": "🏠 Дом/Авто",
+    "business": "💼 Бизнес",
+    "family": "👨‍👩‍👧‍👦 Семья",
+    "psychology": "🧠 Психология",
+    "partner": "🤝 Партнёр",
+    "mentor": "📈 Ментор",
+}
 
 
-# === Хранитель Видения: goals → system prompt ===
+# === Хранитель Видения: goals + кросс-бот контекст → system prompt ===
 
 async def _system_with_vision(user_id: int) -> str:
-    """Добавить активные цели в system prompt."""
+    """Добавить активные цели и кросс-бот контекст в system prompt."""
+    now_str = datetime.now(MSK).strftime("%d.%m.%Y %H:%M")
+    base = MASTER_SYSTEM + f"\n\nТекущее время: {now_str}"
+
     goals = await get_active_goals(user_id)
 
     if not goals:
-        return MASTER_SYSTEM + "\n\nУ пользователя пока нет целей."
+        base += "\n\nУ пользователя пока нет целей."
+    else:
+        goals_text = ""
+        for g in goals:
+            emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(g["type"], "📌")
+            progress = g.get("progress_pct", 0)
+            goals_text += f"{emoji} [{g['type']}] {g['title']} — {progress}%\n"
+        base += VISION_CONTEXT.format(goals=goals_text)
 
-    goals_text = ""
-    for g in goals:
-        emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(g["type"], "📌")
-        progress = g.get("progress_pct", 0)
-        goals_text += f"{emoji} [{g['type']}] {g['title']} — {progress}%\n"
+    # Кросс-бот контекст — последние события из ВСЕХ ботов
+    events = await get_cross_bot_summary(user_id, days=7)
+    if events:
+        cross_lines = []
+        for ev in events[:20]:
+            bot = BOT_LABELS.get(ev["bot_source"], ev["bot_source"])
+            et = ev.get("event_type", "")
+            raw = (ev.get("raw_text") or "")[:80]
+            jd = ev.get("json_data") or {}
+            ts = ev.get("timestamp", "")
+            if hasattr(ts, "strftime"):
+                ts = ts.strftime("%d.%m %H:%M")
+            detail = jd.get("description") or jd.get("title") or raw
+            cross_lines.append(f"[{ts}] {bot} | {et}: {detail}")
+        base += "\n\n📡 ПОСЛЕДНИЕ СОБЫТИЯ ИЗ ВСЕХ БОТОВ:\n" + "\n".join(cross_lines)
 
-    return MASTER_SYSTEM + VISION_CONTEXT.format(goals=goals_text)
+    return base
 
 
 # === /start ===
@@ -217,6 +255,143 @@ async def btn_charts(message: Message, db_user: dict) -> None:
 @router.message(F.text == "ℹ️ Статус")
 async def btn_status(message: Message, db_user: dict) -> None:
     await cmd_status(message, db_user)
+
+
+# === AI Панель — модели, бесплатные лимиты, маршрутизация ===
+
+@router.message(F.text == "🤖 AI Панель")
+async def mode_ai_panel(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.AI_PANEL)
+
+    free_used = _get_free_count_today()
+    free_left = max(0, FREE_DAILY_LIMIT - free_used)
+
+    task_types = [
+        "meal_photo", "daily_summary", "workout_parse",
+        "psychology_diary", "psychology_habit",
+        "family_parse", "family_receipt",
+        "general_chat", "master_audit", "master_goal", "master_talk",
+    ]
+
+    lines = []
+    for tt in task_types:
+        cfg = await get_model_config(tt)
+        model = cfg.get("model", "gpt-4o-mini")
+        lines.append(f"<code>{tt}</code> → <b>{model}</b>")
+
+    models_text = "\n".join(lines)
+
+    text = (
+        f"🤖 <b>AI Панель</b>\n\n"
+        f"🆓 Бесплатные запросы сегодня: <b>{free_used}/{FREE_DAILY_LIMIT}</b>\n"
+        f"   Осталось: <b>{free_left}</b>\n\n"
+        f"📡 <b>Маршрутизация моделей:</b>\n{models_text}\n\n"
+        f"Модели управляются через таблицу <code>model_routing</code> в БД.\n"
+        f"Бесплатные модели используются автоматически, пока лимит не исчерпан."
+    )
+
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+# === Промпты проектов ===
+
+@router.message(F.text == "📋 Промпты")
+async def mode_prompts(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.PROMPTS)
+    projects = await get_user_projects(user_id)
+
+    if not projects:
+        await message.answer("Нет проектов.", reply_markup=main_keyboard())
+        return
+
+    text = "📋 <b>Промпты проектов:</b>\n\n"
+    for p in projects:
+        meta = p.get("metadata") or {}
+        prompt = meta.get("system_prompt")
+        pid = p["project_id"]
+        if prompt:
+            short = prompt[:120] + ("…" if len(prompt) > 120 else "")
+            text += f"<b>{p['name']}</b> (id={pid})\n📝 <i>{short}</i>\n\n"
+        else:
+            text += f"<b>{p['name']}</b> (id={pid})\n⬜ промпт не задан\n\n"
+
+    text += (
+        "Команды:\n"
+        "<code>/set_prompt ID текст</code> — задать промпт\n"
+        "<code>/clear_prompt ID</code> — убрать промпт"
+    )
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+@router.message(Command("set_prompt"))
+async def cmd_set_prompt(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/set_prompt", "", 1).strip()
+
+    if not args or " " not in args:
+        await message.answer(
+            "Использование:\n<code>/set_prompt ID текст промпта</code>\n\n"
+            "Нажми 📋 Промпты — чтобы увидеть ID проектов.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    first_space = args.index(" ")
+    try:
+        project_id = int(args[:first_space])
+    except ValueError:
+        await message.answer("Первый аргумент — числовой ID проекта.")
+        return
+
+    prompt_text = args[first_space + 1:].strip()
+    if not prompt_text:
+        await message.answer("Текст промпта не может быть пустым.")
+        return
+
+    proj = await get_project(project_id)
+    if not proj or proj.get("owner_id") != user_id:
+        await message.answer("Проект не найден или нет доступа.")
+        return
+
+    meta = dict(proj.get("metadata") or {})
+    meta["system_prompt"] = prompt_text
+    await update_project_metadata(project_id, user_id, meta)
+
+    await message.answer(
+        f"✅ Промпт для <b>{proj['name']}</b> обновлён:\n\n<i>{prompt_text[:200]}</i>",
+        reply_markup=main_keyboard(),
+    )
+
+
+@router.message(Command("clear_prompt"))
+async def cmd_clear_prompt(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/clear_prompt", "", 1).strip()
+
+    try:
+        project_id = int(args)
+    except ValueError:
+        await message.answer(
+            "Использование: <code>/clear_prompt ID</code>",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    proj = await get_project(project_id)
+    if not proj or proj.get("owner_id") != user_id:
+        await message.answer("Проект не найден или нет доступа.")
+        return
+
+    meta = dict(proj.get("metadata") or {})
+    meta.pop("system_prompt", None)
+    await update_project_metadata(project_id, user_id, meta)
+
+    await message.answer(
+        f"🗑 Промпт для <b>{proj['name']}</b> удалён.",
+        reply_markup=main_keyboard(),
+    )
 
 
 # === Проекты ===

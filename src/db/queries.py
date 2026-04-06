@@ -94,6 +94,43 @@ async def get_recent_events(
     return [dict(r) for r in rows]
 
 
+async def get_today_meals(user_id: int, bot_source: str = "health") -> list[dict]:
+    """Приёмы пищи за сегодня (по серверному MSK-дню)."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM events
+           WHERE user_id = $1 AND event_type = 'meal' AND bot_source = $2
+             AND timestamp >= (NOW() AT TIME ZONE 'Europe/Moscow')::date
+           ORDER BY timestamp ASC""",
+        user_id, bot_source,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_today_workouts(user_id: int, bot_source: str = "health") -> list[dict]:
+    """Тренировки за сегодня (по MSK-дню)."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM events
+           WHERE user_id = $1 AND event_type = 'workout' AND bot_source = $2
+             AND timestamp >= (NOW() AT TIME ZONE 'Europe/Moscow')::date
+           ORDER BY timestamp ASC""",
+        user_id, bot_source,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_cross_bot_summary(user_id: int, days: int = 7) -> list[dict]:
+    """Последние события по ВСЕМ ботам за N дней (для кросс-бот контекста)."""
+    rows = await get_pool().fetch(
+        """SELECT bot_source, event_type, raw_text, json_data, timestamp
+           FROM events
+           WHERE user_id = $1 AND timestamp >= NOW() - ($2 || ' days')::interval
+           ORDER BY timestamp DESC
+           LIMIT 50""",
+        user_id, str(days),
+    )
+    return [dict(r) for r in rows]
+
+
 # === Finances (строгая математика — SQL only) ===
 
 async def create_finance(
@@ -278,6 +315,15 @@ async def archive_project(project_id: int, user_id: int) -> bool:
     result = await get_pool().execute(
         "UPDATE projects SET status = 'archived' WHERE project_id = $1 AND owner_id = $2",
         project_id, user_id,
+    )
+    return result != "UPDATE 0"
+
+
+async def update_project_metadata(project_id: int, user_id: int, metadata: dict) -> bool:
+    """Обновить metadata проекта (ACL: только владелец)."""
+    result = await get_pool().execute(
+        "UPDATE projects SET metadata = $1 WHERE project_id = $2 AND owner_id = $3",
+        metadata, project_id, user_id,
     )
     return result != "UPDATE 0"
 

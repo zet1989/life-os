@@ -2,7 +2,11 @@
 
 Доступ: только Алексей (admin). Жена и партнёр не видят этого бота.
 Все записи дневника → events + RAG embedding для долгосрочной рефлексии.
+Кросс-бот контекст: психолог видит данные ВСЕХ ботов Life OS.
 """
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import structlog
 from aiogram import Bot, F, Router
@@ -14,7 +18,7 @@ from src.ai.router import chat
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer
-from src.db.queries import create_event, get_active_goals
+from src.db.queries import create_event, get_active_goals, get_cross_bot_summary
 from src.bots.psychology.keyboard import (
     Mode,
     get_user_mode,
@@ -35,6 +39,51 @@ logger = structlog.get_logger()
 router = Router()
 
 BOT_SOURCE = "psychology"
+MSK = ZoneInfo("Europe/Moscow")
+
+BOT_LABELS = {
+    "health": "🏥 Здоровье",
+    "assets": "🏠 Дом/Авто",
+    "business": "💼 Бизнес",
+    "family": "👨‍👩‍👧‍👦 Семья",
+    "master": "🧠 Мастер",
+    "partner": "🤝 Партнёр",
+    "mentor": "📈 Ментор",
+}
+
+
+async def _build_life_context(user_id: int) -> str:
+    """Собрать краткий контекст из всех ботов за последнюю неделю."""
+    events = await get_cross_bot_summary(user_id, days=7)
+    if not events:
+        return "Нет данных из других ботов за последнюю неделю."
+
+    lines = []
+    for ev in events[:30]:
+        bot = BOT_LABELS.get(ev["bot_source"], ev["bot_source"])
+        event_type = ev.get("event_type", "")
+        raw = (ev.get("raw_text") or "")[:100]
+        jd = ev.get("json_data") or {}
+        ts = ev.get("timestamp", "")
+        if hasattr(ts, "strftime"):
+            ts = ts.strftime("%d.%m %H:%M")
+
+        detail = raw
+        if event_type == "meal" and jd.get("description"):
+            detail = f"{jd['description']} ({jd.get('calories', '?')} ккал)"
+        elif event_type == "business_task" and jd.get("title"):
+            detail = jd["title"]
+
+        lines.append(f"[{ts}] {bot} | {event_type}: {detail}")
+
+    return "\n".join(lines)
+
+
+async def _psychology_system(user_id: int) -> str:
+    """Собрать полный system prompt для психолога с контекстом жизни."""
+    now_str = datetime.now(MSK).strftime("%d.%m.%Y %H:%M")
+    life_context = await _build_life_context(user_id)
+    return PSYCHOLOGY_SYSTEM.format(current_time=now_str, life_context=life_context)
 
 
 # === /start ===
@@ -113,10 +162,11 @@ async def mode_retro(message: Message, db_user: dict) -> None:
 
     processing = await message.answer("⏳ Анализирую записи за неделю...")
 
+    system = await _psychology_system(user_id)
     result = await rag_answer(
         query="Мои записи в дневнике и привычки за последнюю неделю",
         user_id=user_id,
-        system_prompt=PSYCHOLOGY_SYSTEM + "\n\n" + RETROSPECTIVE_PROMPT,
+        system_prompt=system + "\n\n" + RETROSPECTIVE_PROMPT,
         top_k=15,
         bot_source=BOT_SOURCE,
     )
@@ -209,8 +259,9 @@ async def cb_habit(callback: CallbackQuery) -> None:
         status="держится" if status == "success" else "сорвался",
         streak=streak,
     )
+    system = await _psychology_system(user_id)
     messages = [
-        {"role": "system", "content": PSYCHOLOGY_SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": prompt},
     ]
     reply = await chat(
@@ -317,10 +368,11 @@ async def _process_diary(message: Message, user_id: int, text: str) -> None:
     await store_event_embedding(event["id"], text, user_id, BOT_SOURCE)
 
     # Обратная связь от психолога
+    system = await _psychology_system(user_id)
     messages = await build_messages(
         user_id=user_id,
         bot_source=BOT_SOURCE,
-        system_prompt=PSYCHOLOGY_SYSTEM + "\n\n" + DIARY_PROMPT,
+        system_prompt=system + "\n\n" + DIARY_PROMPT,
         user_text=text,
     )
     reply = await chat(
