@@ -44,5 +44,11 @@ jobs:
             done
             echo '=== Syncthing status ==='
             docker compose logs --tail=10 syncthing
+            echo '=== Syncthing Device ID ==='
+            docker compose exec -T syncthing syncthing -device-id 2>/dev/null || echo "syncthing cli not available"
+            echo '=== SSH authorized_keys ==='
+            cat ~/.ssh/authorized_keys
+            echo '=== iptables SSH ==='
+            iptables -L INPUT -n | head -20
             echo '=== Bot logs ==='
             docker compose logs --tail=20 bot
