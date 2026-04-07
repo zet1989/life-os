@@ -62,10 +62,12 @@ TASK_PARSE_PROMPT = (
     "2. due_date — дата в формате YYYY-MM-DD (если упомянута). "
     "Сегодня: {today}. 'завтра' = +1 день, 'послезавтра' = +2, 'в понедельник' = ближайший пн и т.д.\n"
     "3. due_time — время в формате HH:MM (если упомянуто), null если не указано\n"
-    "4. priority — low/normal/high/urgent (по контексту, по умолчанию normal)\n\n"
+    "4. priority — low/normal/high/urgent (по контексту, по умолчанию normal)\n"
+    "5. tags — массив тэгов (1-3 слова без #), категоризирующих задачу. "
+    "Примеры: [\"работа\"], [\"дом\", \"покупки\"], [\"здоровье\"]. Пустой массив если не очевидно.\n\n"
     "Ответь ТОЛЬКО JSON:\n"
     "{{\"task_text\": \"...\", \"due_date\": \"YYYY-MM-DD или null\", "
-    "\"due_time\": \"HH:MM или null\", \"priority\": \"normal\"}}"
+    "\"due_time\": \"HH:MM или null\", \"priority\": \"normal\", \"tags\": []}}"
 )
 
 MORNING_BRIEFING_PROMPT = (

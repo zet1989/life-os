@@ -783,40 +783,52 @@ async def create_task(
     source: str = "telegram",
     source_file: str | None = None,
     recurrence: str | None = None,
+    parent_task_id: int | None = None,
+    goal_id: int | None = None,
+    tags: list[str] | None = None,
 ) -> dict:
-    """Create a task, optionally recurring."""
+    """Create a task, optionally recurring, with subtask/goal/tag support."""
     row = await get_pool().fetchrow(
         """INSERT INTO tasks (user_id, task_text, due_date, due_time, priority,
-                              project_id, source, source_file, recurrence)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *""",
+                              project_id, source, source_file, recurrence,
+                              parent_task_id, goal_id, tags)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *""",
         user_id, task_text, _parse_date(due_date), _parse_time(due_time), priority,
         project_id, source, source_file, recurrence,
+        parent_task_id, goal_id, tags or [],
     )
     return dict(row)
 
 
 async def get_tasks_by_date(user_id: int, date: str) -> list[dict]:
-    """Задачи на конкретную дату (YYYY-MM-DD)."""
+    """Задачи на конкретную дату (YYYY-MM-DD), без подзадач."""
     rows = await get_pool().fetch(
-        """SELECT t.*, p.name AS project_name
+        """SELECT t.*, p.name AS project_name, g.title AS goal_title,
+                  (SELECT COUNT(*) FROM tasks st WHERE st.parent_task_id = t.id) AS subtask_count,
+                  (SELECT COUNT(*) FROM tasks st WHERE st.parent_task_id = t.id AND st.is_done = TRUE) AS subtask_done
            FROM tasks t
            LEFT JOIN projects p ON t.project_id = p.project_id
-           WHERE t.user_id = $1 AND t.due_date = $2
-           ORDER BY t.is_done ASC, t.due_time ASC NULLS LAST, t.priority DESC""",
+           LEFT JOIN goals g ON t.goal_id = g.id
+           WHERE t.user_id = $1 AND t.due_date = $2 AND t.parent_task_id IS NULL
+           ORDER BY t.sort_order ASC, t.is_done ASC, t.due_time ASC NULLS LAST, t.priority DESC""",
         user_id, _parse_date(date),
     )
     return [dict(r) for r in rows]
 
 
 async def get_today_tasks(user_id: int) -> list[dict]:
-    """Задачи на сегодня (MSK)."""
+    """Задачи на сегодня (MSK), без подзадач."""
     rows = await get_pool().fetch(
-        """SELECT t.*, p.name AS project_name
+        """SELECT t.*, p.name AS project_name, g.title AS goal_title,
+                  (SELECT COUNT(*) FROM tasks st WHERE st.parent_task_id = t.id) AS subtask_count,
+                  (SELECT COUNT(*) FROM tasks st WHERE st.parent_task_id = t.id AND st.is_done = TRUE) AS subtask_done
            FROM tasks t
            LEFT JOIN projects p ON t.project_id = p.project_id
+           LEFT JOIN goals g ON t.goal_id = g.id
            WHERE t.user_id = $1
              AND t.due_date = (NOW() AT TIME ZONE 'Europe/Moscow')::date
-           ORDER BY t.is_done ASC, t.due_time ASC NULLS LAST, t.priority DESC""",
+             AND t.parent_task_id IS NULL
+           ORDER BY t.sort_order ASC, t.is_done ASC, t.due_time ASC NULLS LAST, t.priority DESC""",
         user_id,
     )
     return [dict(r) for r in rows]
@@ -926,7 +938,8 @@ async def get_today_focus(user_id: int) -> dict | None:
 async def complete_task(task_id: int, user_id: int) -> bool:
     """Отметить задачу выполненной (ACL: только владелец)."""
     result = await get_pool().execute(
-        """UPDATE tasks SET is_done = TRUE, done_at = NOW(), updated_at = NOW()
+        """UPDATE tasks SET is_done = TRUE, done_at = NOW(), updated_at = NOW(),
+                           kanban_status = 'done'
            WHERE id = $1 AND user_id = $2""",
         task_id, user_id,
     )
@@ -936,7 +949,8 @@ async def complete_task(task_id: int, user_id: int) -> bool:
 async def uncomplete_task(task_id: int, user_id: int) -> bool:
     """Снять отметку выполненной."""
     result = await get_pool().execute(
-        """UPDATE tasks SET is_done = FALSE, done_at = NULL, updated_at = NOW()
+        """UPDATE tasks SET is_done = FALSE, done_at = NULL, updated_at = NOW(),
+                           kanban_status = 'todo'
            WHERE id = $1 AND user_id = $2""",
         task_id, user_id,
     )
@@ -1060,6 +1074,105 @@ async def get_completed_today_count(user_id: int) -> int:
         user_id,
     )
     return int(val)
+
+
+# === Subtasks, Tags, Kanban ===
+
+async def get_subtasks(parent_task_id: int, user_id: int) -> list[dict]:
+    """Подзадачи конкретной задачи."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM tasks
+           WHERE parent_task_id = $1 AND user_id = $2
+           ORDER BY sort_order ASC, is_done ASC, id ASC""",
+        parent_task_id, user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_kanban_tasks(user_id: int) -> dict[str, list[dict]]:
+    """Задачи в формате Kanban (backlog / todo / in_progress / done)."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name, g.title AS goal_title
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           LEFT JOIN goals g ON t.goal_id = g.id
+           WHERE t.user_id = $1
+             AND t.parent_task_id IS NULL
+             AND (t.kanban_status != 'done' OR t.done_at >= NOW() - INTERVAL '7 days')
+           ORDER BY t.sort_order ASC, t.priority DESC, t.due_date ASC NULLS LAST""",
+        user_id,
+    )
+    result: dict[str, list[dict]] = {"backlog": [], "todo": [], "in_progress": [], "done": []}
+    for r in rows:
+        status = r.get("kanban_status") or "todo"
+        if status in result:
+            result[status].append(dict(r))
+    return result
+
+
+async def update_kanban_status(task_id: int, user_id: int, status: str) -> bool:
+    """Обновить kanban-статус задачи."""
+    result = await get_pool().execute(
+        """UPDATE tasks SET kanban_status = $3, updated_at = NOW()
+           WHERE id = $1 AND user_id = $2""",
+        task_id, user_id, status,
+    )
+    return result != "UPDATE 0"
+
+
+async def get_tasks_by_tag(user_id: int, tag: str) -> list[dict]:
+    """Задачи по тэгу."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name, g.title AS goal_title
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           LEFT JOIN goals g ON t.goal_id = g.id
+           WHERE t.user_id = $1 AND $2 = ANY(t.tags)
+           ORDER BY t.is_done ASC, t.due_date ASC NULLS LAST""",
+        user_id, tag,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_all_tags(user_id: int) -> list[str]:
+    """Все уникальные тэги пользователя."""
+    rows = await get_pool().fetch(
+        """SELECT DISTINCT unnest(tags) AS tag FROM tasks
+           WHERE user_id = $1 AND array_length(tags, 1) > 0
+           ORDER BY tag""",
+        user_id,
+    )
+    return [r["tag"] for r in rows]
+
+
+async def update_task_tags(task_id: int, user_id: int, tags: list[str]) -> bool:
+    """Обновить тэги задачи."""
+    result = await get_pool().execute(
+        """UPDATE tasks SET tags = $3, updated_at = NOW()
+           WHERE id = $1 AND user_id = $2""",
+        task_id, user_id, tags,
+    )
+    return result != "UPDATE 0"
+
+
+async def update_task_goal(task_id: int, user_id: int, goal_id: int | None) -> bool:
+    """Привязать задачу к цели."""
+    result = await get_pool().execute(
+        """UPDATE tasks SET goal_id = $3, updated_at = NOW()
+           WHERE id = $1 AND user_id = $2""",
+        task_id, user_id, goal_id,
+    )
+    return result != "UPDATE 0"
+
+
+async def reorder_task(task_id: int, user_id: int, new_order: int) -> bool:
+    """Обновить sort_order задачи."""
+    result = await get_pool().execute(
+        """UPDATE tasks SET sort_order = $3, updated_at = NOW()
+           WHERE id = $1 AND user_id = $2""",
+        task_id, user_id, new_order,
+    )
+    return result != "UPDATE 0"
 
 
 # === Obsidian Tasks ===

@@ -34,21 +34,29 @@ from src.db.queries import (
     create_task,
     delete_task,
     get_active_goals,
+    get_all_tags,
     get_cross_bot_summary,
     get_finance_summary,
+    get_kanban_tasks,
     get_obsidian_today_tasks,
     get_overdue_tasks,
     get_project,
+    get_subtasks,
     get_task_by_id,
     get_tasks_by_date,
+    get_tasks_by_tag,
     get_today_focus,
     get_today_tasks,
     get_user_projects,
     get_week_tasks,
+    reorder_task,
     reschedule_task,
     uncomplete_task,
     update_goal,
+    update_kanban_status,
     update_project_metadata,
+    update_task_goal,
+    update_task_tags,
 )
 from src.bots.master.keyboard import (
     Mode,
@@ -389,23 +397,38 @@ def _format_task_line(t: dict) -> str:
     time_part = f"{time_str} — " if time_str else ""
     prio = PRIORITY_EMOJI.get(t.get("priority", "normal"), "")
     proj = f" [📁 {t['project_name']}]" if t.get("project_name") else ""
-    return f"{check} {time_part}{t['task_text']}{proj} {prio}"
+    goal = f" [🎯 {t['goal_title']}]" if t.get("goal_title") else ""
+    tags_str = " " + " ".join(f"#{tag}" for tag in t.get("tags") or []) if t.get("tags") else ""
+    # Подзадачи: показать прогресс
+    sub_count = t.get("subtask_count", 0)
+    sub_done = t.get("subtask_done", 0)
+    sub_str = f" [{sub_done}/{sub_count}]" if sub_count else ""
+    return f"{check} {time_part}{t['task_text']}{proj}{goal}{tags_str}{sub_str} {prio}"
 
 
 def _tasks_inline_keyboard(tasks: list[dict]) -> InlineKeyboardMarkup:
     """Inline-кнопки для переключения задач done/undone."""
     buttons = []
     for t in tasks:
+        row = []
         if t["is_done"]:
-            buttons.append([InlineKeyboardButton(
-                text=f"↩️ {t['task_text'][:30]}",
+            row.append(InlineKeyboardButton(
+                text=f"↩️ {t['task_text'][:25]}",
                 callback_data=f"task_undo:{t['id']}",
-            )])
+            ))
         else:
-            buttons.append([InlineKeyboardButton(
-                text=f"✅ {t['task_text'][:30]}",
+            row.append(InlineKeyboardButton(
+                text=f"✅ {t['task_text'][:25]}",
                 callback_data=f"task_done:{t['id']}",
-            )])
+            ))
+        # Кнопка подзадач, если есть
+        sub_count = t.get("subtask_count", 0)
+        if sub_count:
+            row.append(InlineKeyboardButton(
+                text=f"📋 {t.get('subtask_done', 0)}/{sub_count}",
+                callback_data=f"subtasks:{t['id']}",
+            ))
+        buttons.append(row)
     buttons.append([
         InlineKeyboardButton(text="➕ Добавить", callback_data="task_add"),
         InlineKeyboardButton(text="🔄 Просрочено", callback_data="task_overdue"),
@@ -696,6 +719,400 @@ async def cmd_week(message: Message, db_user: dict) -> None:
     await safe_answer(message, text, reply_markup=main_keyboard())
 
 
+# === /subtask — добавить подзадачу ===
+
+@router.message(Command("subtask"))
+async def cmd_subtask(message: Message, db_user: dict) -> None:
+    """/subtask <parent_id> <текст> — добавить подзадачу."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/subtask", "", 1).strip()
+
+    if not args or " " not in args:
+        await message.answer(
+            "Использование:\n"
+            "<code>/subtask 42 Подготовить документы</code>\n"
+            "Где 42 — ID родительской задачи.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    parts = args.split(maxsplit=1)
+    try:
+        parent_id = int(parts[0])
+    except ValueError:
+        await message.answer("Первый аргумент — числовой ID задачи.")
+        return
+
+    parent = await get_task_by_id(parent_id, user_id)
+    if not parent:
+        await message.answer("Задача не найдена или нет доступа.")
+        return
+
+    sub_text = parts[1].strip()[:200]
+    task = await create_task(
+        user_id=user_id,
+        task_text=sub_text,
+        due_date=parent.get("due_date"),
+        parent_task_id=parent_id,
+        priority=parent.get("priority", "normal"),
+    )
+    await message.answer(
+        f"📋 Подзадача добавлена к «{parent['task_text'][:40]}»:\n"
+        f"  ⬜ {sub_text}",
+        reply_markup=main_keyboard(),
+    )
+
+
+# === Subtask callbacks ===
+
+@router.callback_query(F.data.startswith("subtasks:"))
+async def cb_show_subtasks(callback: CallbackQuery) -> None:
+    """Показать подзадачи."""
+    user_id = callback.from_user.id
+    parent_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    parent = await get_task_by_id(parent_id, user_id)
+    if not parent:
+        await callback.answer("Задача не найдена")
+        return
+
+    subs = await get_subtasks(parent_id, user_id)
+    text = f"📋 <b>{parent['task_text']}</b>\n\n"
+    if not subs:
+        text += "Подзадач нет.\n"
+    else:
+        done = sum(1 for s in subs if s["is_done"])
+        text += f"Выполнено: {done}/{len(subs)}\n\n"
+        for s in subs:
+            check = "✅" if s["is_done"] else "⬜"
+            text += f"  {check} {s['task_text']}\n"
+
+    text += f"\nДобавить: <code>/subtask {parent_id} текст</code>"
+
+    buttons = []
+    for s in subs:
+        if s["is_done"]:
+            buttons.append([InlineKeyboardButton(
+                text=f"↩️ {s['task_text'][:30]}",
+                callback_data=f"sub_undo:{s['id']}:{parent_id}",
+            )])
+        else:
+            buttons.append([InlineKeyboardButton(
+                text=f"✅ {s['task_text'][:30]}",
+                callback_data=f"sub_done:{s['id']}:{parent_id}",
+            )])
+    buttons.append([InlineKeyboardButton(text="◀ Назад", callback_data="cal:back")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.answer()
+    await safe_edit(callback.message, text, reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("sub_done:"))
+async def cb_sub_done(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    parts = callback.data.split(":")  # type: ignore[union-attr]
+    task_id, parent_id = int(parts[1]), int(parts[2])
+    await complete_task(task_id, user_id)
+    await callback.answer("✅")
+    # Перерисовать подзадачи
+    callback.data = f"subtasks:{parent_id}"  # type: ignore[assignment]
+    await cb_show_subtasks(callback)
+
+
+@router.callback_query(F.data.startswith("sub_undo:"))
+async def cb_sub_undo(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    parts = callback.data.split(":")  # type: ignore[union-attr]
+    task_id, parent_id = int(parts[1]), int(parts[2])
+    await uncomplete_task(task_id, user_id)
+    await callback.answer("↩️")
+    callback.data = f"subtasks:{parent_id}"  # type: ignore[assignment]
+    await cb_show_subtasks(callback)
+
+
+# === /kanban — Kanban-доска ===
+
+KANBAN_COLUMNS = {
+    "backlog": "📥 Бэклог",
+    "todo": "📋 К выполнению",
+    "in_progress": "🔄 В работе",
+    "done": "✅ Готово",
+}
+
+
+@router.message(Command("kanban"))
+async def cmd_kanban(message: Message, db_user: dict) -> None:
+    """Kanban-вид задач."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    board = await get_kanban_tasks(user_id)
+
+    text = "📊 <b>Kanban-доска</b>\n"
+
+    for status, label in KANBAN_COLUMNS.items():
+        tasks = board.get(status, [])
+        text += f"\n<b>{label}</b> ({len(tasks)})\n"
+        if not tasks:
+            text += "  <i>пусто</i>\n"
+        else:
+            for t in tasks[:10]:
+                prio = PRIORITY_EMOJI.get(t.get("priority", "normal"), "")
+                tags_str = " ".join(f"#{tag}" for tag in t.get("tags") or [])
+                tags_part = f" {tags_str}" if tags_str else ""
+                text += f"  {'✅' if t['is_done'] else '⬜'} {t['task_text'][:40]}{tags_part} {prio}\n"
+
+    # Кнопки для перемещения
+    buttons = []
+    # Показать кнопки для задач in_progress → done
+    for t in board.get("in_progress", [])[:5]:
+        buttons.append([InlineKeyboardButton(
+            text=f"✅ {t['task_text'][:25]}",
+            callback_data=f"kb_move:{t['id']}:done",
+        )])
+    # Показать кнопки для задач todo → in_progress
+    for t in board.get("todo", [])[:5]:
+        buttons.append([InlineKeyboardButton(
+            text=f"🔄 {t['task_text'][:25]}",
+            callback_data=f"kb_move:{t['id']}:in_progress",
+        )])
+
+    if buttons:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await safe_answer(message, text, reply_markup=keyboard)
+    else:
+        await safe_answer(message, text, reply_markup=main_keyboard())
+
+
+@router.callback_query(F.data.startswith("kb_move:"))
+async def cb_kanban_move(callback: CallbackQuery) -> None:
+    """Переместить задачу в другую колонку Kanban."""
+    user_id = callback.from_user.id
+    parts = callback.data.split(":")  # type: ignore[union-attr]
+    task_id = int(parts[1])
+    new_status = parts[2]
+
+    await update_kanban_status(task_id, user_id, new_status)
+    # Если перемещена в done — автоматически отметить выполненной
+    if new_status == "done":
+        await complete_task(task_id, user_id)
+    elif new_status in ("todo", "in_progress", "backlog"):
+        # Если возвращена из done — снять отметку
+        task = await get_task_by_id(task_id, user_id)
+        if task and task["is_done"]:
+            await uncomplete_task(task_id, user_id)
+
+    label = KANBAN_COLUMNS.get(new_status, new_status)
+    await callback.answer(f"→ {label}")
+    # Перерисовать Kanban
+    await callback.message.delete()  # type: ignore[union-attr]
+    await cmd_kanban(callback.message, {})  # type: ignore[arg-type]
+
+
+# === /tags — тэги ===
+
+@router.message(Command("tags"))
+async def cmd_tags(message: Message, db_user: dict) -> None:
+    """Показать все тэги и задачи по тэгу."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/tags", "", 1).strip().lstrip("#").lower()
+
+    if args:
+        # Показать задачи по тэгу
+        tasks = await get_tasks_by_tag(user_id, args)
+        if not tasks:
+            await message.answer(f"Задач с тэгом #{args} не найдено.", reply_markup=main_keyboard())
+            return
+
+        text = f"🏷 <b>Задачи с тэгом #{args}</b>\n\n"
+        for t in tasks:
+            check = "✅" if t["is_done"] else "⬜"
+            date_str = t["due_date"].strftime("%d.%m") if t.get("due_date") else ""
+            text += f"{check} [{date_str}] {t['task_text']}\n"
+        await safe_answer(message, text, reply_markup=main_keyboard())
+    else:
+        # Показать все тэги
+        all_tags = await get_all_tags(user_id)
+        if not all_tags:
+            await message.answer(
+                "Тэгов пока нет.\nТэги добавляются автоматически при создании задач.",
+                reply_markup=main_keyboard(),
+            )
+            return
+
+        text = "🏷 <b>Ваши тэги:</b>\n\n"
+        for tag in all_tags:
+            text += f"  #{tag}\n"
+        text += "\nИспользование: <code>/tags работа</code> — задачи по тэгу"
+        await message.answer(text, reply_markup=main_keyboard())
+
+
+# === /tag — добавить тэг к задаче ===
+
+@router.message(Command("tag"))
+async def cmd_tag(message: Message, db_user: dict) -> None:
+    """/tag <task_id> <тэг> — добавить тэг к задаче."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/tag", "", 1).strip()
+
+    if not args or " " not in args:
+        await message.answer(
+            "Использование: <code>/tag 42 работа</code>",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    parts = args.split(maxsplit=1)
+    try:
+        task_id = int(parts[0])
+    except ValueError:
+        await message.answer("Первый аргумент — числовой ID задачи.")
+        return
+
+    task = await get_task_by_id(task_id, user_id)
+    if not task:
+        await message.answer("Задача не найдена или нет доступа.")
+        return
+
+    new_tag = parts[1].strip().lstrip("#").lower()
+    tags = list(task.get("tags") or [])
+    if new_tag not in tags:
+        tags.append(new_tag)
+    await update_task_tags(task_id, user_id, tags)
+    await message.answer(
+        f"🏷 Тэг <b>#{new_tag}</b> добавлен к «{task['task_text'][:40]}»\n"
+        f"Тэги: {' '.join(f'#{t}' for t in tags)}",
+        reply_markup=main_keyboard(),
+    )
+
+
+# === /link_goal — привязать задачу к цели ===
+
+@router.message(Command("link_goal"))
+async def cmd_link_goal(message: Message, db_user: dict) -> None:
+    """/link_goal <task_id> <goal_id> — привязать задачу к цели."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/link_goal", "", 1).strip()
+
+    if not args:
+        # Показать цели для выбора
+        goals = await get_active_goals(user_id)
+        if not goals:
+            await message.answer("Нет активных целей.", reply_markup=main_keyboard())
+            return
+        text = "Использование: <code>/link_goal TASK_ID GOAL_ID</code>\n\n🎯 Цели:\n"
+        for g in goals:
+            emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(g["type"], "📌")
+            text += f"  {emoji} id={g['id']} — {g['title']}\n"
+        await message.answer(text, reply_markup=main_keyboard())
+        return
+
+    parts = args.split()
+    if len(parts) < 2:
+        await message.answer("Укажи ID задачи и ID цели. Пример: /link_goal 42 1")
+        return
+
+    try:
+        task_id = int(parts[0])
+        goal_id = int(parts[1])
+    except ValueError:
+        await message.answer("Оба аргумента должны быть числами.")
+        return
+
+    task = await get_task_by_id(task_id, user_id)
+    if not task:
+        await message.answer("Задача не найдена.")
+        return
+
+    await update_task_goal(task_id, user_id, goal_id)
+    await message.answer(
+        f"🎯 Задача «{task['task_text'][:40]}» привязана к цели #{goal_id}",
+        reply_markup=main_keyboard(),
+    )
+
+
+# === /move — переместить задачу по Kanban ===
+
+@router.message(Command("move"))
+async def cmd_move(message: Message, db_user: dict) -> None:
+    """/move <task_id> <status> — переместить задачу по Kanban."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/move", "", 1).strip()
+
+    if not args:
+        await message.answer(
+            "Использование: <code>/move 42 in_progress</code>\n\n"
+            "Статусы: backlog, todo, in_progress, done",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    parts = args.split()
+    if len(parts) < 2:
+        await message.answer("Укажи ID задачи и статус.")
+        return
+
+    try:
+        task_id = int(parts[0])
+    except ValueError:
+        await message.answer("Первый аргумент — числовой ID задачи.")
+        return
+
+    status = parts[1].lower()
+    valid_statuses = {"backlog", "todo", "in_progress", "done"}
+    if status not in valid_statuses:
+        await message.answer(f"Статус должен быть одним из: {', '.join(valid_statuses)}")
+        return
+
+    task = await get_task_by_id(task_id, user_id)
+    if not task:
+        await message.answer("Задача не найдена.")
+        return
+
+    await update_kanban_status(task_id, user_id, status)
+    if status == "done":
+        await complete_task(task_id, user_id)
+
+    label = KANBAN_COLUMNS.get(status, status)
+    await message.answer(
+        f"📊 Задача «{task['task_text'][:40]}» → {label}",
+        reply_markup=main_keyboard(),
+    )
+
+
+# === /reorder — изменить порядок задачи ===
+
+@router.message(Command("reorder"))
+async def cmd_reorder(message: Message, db_user: dict) -> None:
+    """/reorder <task_id> <позиция> — изменить порядок."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/reorder", "", 1).strip()
+
+    if not args:
+        await message.answer(
+            "Использование: <code>/reorder 42 1</code>\n"
+            "Чем меньше число — тем выше задача в списке.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    parts = args.split()
+    if len(parts) < 2:
+        await message.answer("Укажи ID задачи и позицию.")
+        return
+
+    try:
+        task_id = int(parts[0])
+        order = int(parts[1])
+    except ValueError:
+        await message.answer("Оба аргумента должны быть числами.")
+        return
+
+    ok = await reorder_task(task_id, user_id, order)
+    if ok:
+        await message.answer(f"✅ Порядок обновлён: позиция {order}", reply_markup=main_keyboard())
+    else:
+        await message.answer("Задача не найдена.")
+
+
 @router.message(Command("done"))
 async def cmd_done(message: Message, db_user: dict) -> None:
     """Отметить задачу выполненной: /done 5."""
@@ -884,6 +1301,9 @@ async def _parse_and_create_task(message: Message, user_id: int, text: str) -> N
         due_time = parsed.get("due_time")
         priority = parsed.get("priority", "normal")
         task_text = parsed["task_text"]
+        tags = parsed.get("tags") or []
+        # Очистка тэгов: убираем # если LLM добавил
+        tags = [t.lstrip("#").lower().strip() for t in tags if t.strip()]
 
         task = await create_task(
             user_id=user_id,
@@ -891,16 +1311,18 @@ async def _parse_and_create_task(message: Message, user_id: int, text: str) -> N
             due_date=due_date,
             due_time=due_time,
             priority=priority,
+            tags=tags,
         )
         await obsidian.log_task_to_daily(task_text, due_time or "", priority)
 
         prio_emoji = PRIORITY_EMOJI.get(priority, "")
         time_str = f" ⏰ {due_time}" if due_time else ""
         date_display = datetime.strptime(due_date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        tags_str = " " + " ".join(f"#{t}" for t in tags) if tags else ""
 
         await message.answer(
             f"📋 Задача добавлена: <b>{task_text}</b>\n"
-            f"📅 {date_display}{time_str} {prio_emoji}",
+            f"📅 {date_display}{time_str} {prio_emoji}{tags_str}",
             reply_markup=main_keyboard(),
         )
         set_user_mode(user_id, Mode.TASKS)
