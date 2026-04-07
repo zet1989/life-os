@@ -5,7 +5,14 @@
 - Утренний брифинг (08:00 MSK)
 - Вечерний обзор (21:00 MSK)
 - Напоминания о задачах (каждую минуту)
+- Автобэкап PostgreSQL (ежедневно в 03:00 MSK)
 """
+
+import asyncio
+import os
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import structlog
 from aiogram import Bot
@@ -23,11 +30,13 @@ from src.db.queries import (
     get_obsidian_pending_reminders,
     get_overdue_tasks,
     get_pending_task_reminders,
+    get_recurring_tasks_due,
     get_today_tasks,
     get_unclosed_tasks,
     get_user_projects,
     mark_obsidian_reminder_sent,
     mark_reminder_sent,
+    spawn_recurring_task,
 )
 from src.bots.master.prompts import AUDIT_PROMPT, EVENING_REVIEW_HEADER, MASTER_SYSTEM, VISION_CONTEXT
 
@@ -166,7 +175,91 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Автобэкап PostgreSQL — 03:00 каждый день
+    scheduler.add_job(
+        run_pg_backup,
+        trigger=CronTrigger(hour=3, minute=0),
+        id="pg_backup",
+        replace_existing=True,
+    )
+
+    # Повторяющиеся задачи — 06:00 каждый день (до утреннего брифинга)
+    scheduler.add_job(
+        spawn_recurring_tasks,
+        trigger=CronTrigger(hour=6, minute=0),
+        id="recurring_tasks",
+        replace_existing=True,
+    )
+
     return scheduler
+
+
+# === Автобэкап PostgreSQL ===
+
+BACKUP_DIR = Path("/app/backups")
+BACKUP_KEEP_DAYS = 7
+
+
+async def run_pg_backup() -> None:
+    """pg_dump → /app/backups/lifeos_YYYY-MM-DD.sql.gz, хранить 7 дней."""
+    try:
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(ZoneInfo("Europe/Moscow"))
+        filename = f"lifeos_{now.strftime('%Y-%m-%d_%H%M')}.sql.gz"
+        filepath = BACKUP_DIR / filename
+
+        db_host = os.getenv("POSTGRES_HOST", "postgres")
+        db_user = os.getenv("POSTGRES_USER", "lifeos")
+        db_name = os.getenv("POSTGRES_DB", "lifeos")
+        db_pass = os.getenv("POSTGRES_PASSWORD", "lifeos")
+
+        cmd = (
+            f"PGPASSWORD={db_pass} pg_dump -h {db_host} -U {db_user} {db_name} "
+            f"| gzip > {filepath}"
+        )
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            logger.error("pg_backup_failed", stderr=stderr.decode()[:500])
+            return
+
+        size_mb = filepath.stat().st_size / (1024 * 1024)
+        logger.info("pg_backup_ok", file=filename, size_mb=round(size_mb, 2))
+
+        # Удаляем старые бэкапы
+        cutoff = now.timestamp() - BACKUP_KEEP_DAYS * 86400
+        for old in BACKUP_DIR.glob("lifeos_*.sql.gz"):
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+                logger.info("pg_backup_cleanup", deleted=old.name)
+
+    except Exception:
+        logger.exception("pg_backup_error")
+
+
+# === Повторяющиеся задачи ===
+
+async def spawn_recurring_tasks() -> None:
+    """Создать экземпляры повторяющихся задач на сегодня."""
+    try:
+        today = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d")
+        templates = await get_recurring_tasks_due(today)
+        for tpl in templates:
+            await spawn_recurring_task(tpl, today)
+            logger.info(
+                "recurring_task_spawned",
+                task_id=tpl["id"],
+                text=tpl["task_text"][:50],
+            )
+        if templates:
+            logger.info("recurring_tasks_done", count=len(templates))
+    except Exception:
+        logger.exception("recurring_tasks_error")
 
 
 # === Утренний брифинг ===

@@ -19,6 +19,7 @@ from src.db.queries import (
     create_project,
     get_finance_summary,
     get_project,
+    get_project_events,
     get_projects_by_type,
 )
 from src.bots.business.keyboard import (
@@ -235,6 +236,13 @@ async def _attach_to_project(callback: CallbackQuery, user_id: int, project_id: 
     await store_event_embedding(event["id"], text, user_id=user_id, bot_source=BOT_SOURCE)
     await obsidian.log_idea(text, source="business")
 
+    # Обновить Project README в Obsidian
+    proj = await get_project(project_id)
+    if proj:
+        fin = await get_finance_summary(project_id)
+        evts = await get_project_events(project_id, limit=10)
+        await obsidian.update_project_readme(proj, fin, evts)
+
     await callback.answer("✅ Сохранено")
     if callback.message:
         await callback.message.answer(result, reply_markup=main_keyboard())  # type: ignore[union-attr]
@@ -392,6 +400,14 @@ async def _attach_to_project_direct(
 
     await store_event_embedding(event["id"], text, user_id=user_id, bot_source=BOT_SOURCE)
     await obsidian.log_idea(text, source="business")
+
+    # Обновить Project README в Obsidian
+    proj = await get_project(project_id)
+    if proj:
+        fin = await get_finance_summary(project_id)
+        evts = await get_project_events(project_id, limit=10)
+        await obsidian.update_project_readme(proj, fin, evts)
+
     await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 

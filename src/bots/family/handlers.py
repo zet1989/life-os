@@ -21,8 +21,10 @@ from src.core.context import save_assistant_reply
 from src.db.queries import (
     create_finance,
     create_project,
+    delete_finance,
     get_finance_summary,
     get_projects_by_type,
+    get_recent_finances,
 )
 from src.bots.family.keyboard import (
     Mode,
@@ -153,6 +155,52 @@ async def mode_settings(message: Message, db_user: dict) -> None:
         "Пока управляется через БД. В будущем — через чат.",
         reply_markup=main_keyboard(),
     )
+
+
+# === /last — последние транзакции ===
+
+@router.message(Command("last"))
+async def cmd_last_transactions(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    txns = await get_recent_finances(user_id, limit=10)
+    if not txns:
+        await message.answer("Нет транзакций.", reply_markup=main_keyboard())
+        return
+
+    lines = ["📋 <b>Последние 10 транзакций:</b>\n"]
+    for tx in txns:
+        emoji = "🔴" if tx["transaction_type"] == "expense" else "🟢"
+        ts = tx["timestamp"]
+        if hasattr(ts, "strftime"):
+            ts = ts.strftime("%d.%m %H:%M")
+        desc = tx.get("description") or tx.get("category", "")
+        lines.append(
+            f"{emoji} <code>#{tx['id']}</code> {ts} — {tx['amount']:,.0f} ₽ ({desc})"
+        )
+    lines.append("\n🗑 Удалить: /del <code>ID</code>")
+    await message.answer("\n".join(lines), reply_markup=main_keyboard())
+
+
+# === /del — удалить транзакцию ===
+
+@router.message(Command("del"))
+async def cmd_delete_transaction(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/del", "").strip()
+    if not args or not args.isdigit():
+        await message.answer(
+            "Использование: /del <ID транзакции>\n"
+            "Узнать ID: /last",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    finance_id = int(args)
+    ok = await delete_finance(finance_id, user_id)
+    if ok:
+        await message.answer(f"✅ Транзакция #{finance_id} удалена.", reply_markup=main_keyboard())
+    else:
+        await message.answer(f"❌ Транзакция #{finance_id} не найдена или нет доступа.", reply_markup=main_keyboard())
 
 
 # === Callback: выбор проекта ===

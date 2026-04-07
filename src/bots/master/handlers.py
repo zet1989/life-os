@@ -529,6 +529,79 @@ async def cmd_done(message: Message, db_user: dict) -> None:
         await message.answer("Задача не найдена или нет доступа.")
 
 
+# === /repeat — создать повторяющуюся задачу ===
+
+@router.message(Command("repeat"))
+async def cmd_repeat(message: Message, db_user: dict) -> None:
+    """/repeat daily Зарядка 07:00 — повторяющаяся задача."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/repeat", "", 1).strip()
+
+    if not args:
+        await message.answer(
+            "Использование:\n"
+            "<code>/repeat daily Зарядка в 07:00</code>\n"
+            "<code>/repeat weekly Обзор недели</code>\n"
+            "<code>/repeat monthly Оплата аренды</code>\n"
+            "<code>/repeat weekdays Стендап 09:30</code>\n\n"
+            "Типы: daily, weekly, monthly, weekdays",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    parts = args.split(maxsplit=1)
+    rec_type = parts[0].lower()
+    valid = {"daily", "weekly", "monthly", "weekdays"}
+    if rec_type not in valid:
+        await message.answer(
+            f"❌ Неизвестный тип: {rec_type}\n"
+            f"Допустимые: {', '.join(valid)}",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    task_text = parts[1] if len(parts) > 1 else ""
+    if not task_text:
+        await message.answer("Укажи текст задачи после типа повторения.")
+        return
+
+    today = datetime.now(MSK).strftime("%Y-%m-%d")
+    prompt = TASK_PARSE_PROMPT.format(text=task_text, today=today)
+    result = await chat(
+        messages=[
+            {"role": "system", "content": MASTER_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        task_type="master_goal",
+        user_id=user_id,
+        bot_source=BOT_SOURCE,
+    )
+    parsed = _extract_json(result)
+    if parsed and "task" in parsed:
+        task = await create_task(
+            user_id=user_id,
+            task_text=parsed["task"],
+            due_date=parsed.get("due_date", today),
+            due_time=parsed.get("due_time"),
+            priority=parsed.get("priority", "normal"),
+            recurrence=rec_type,
+        )
+        rec_label = {
+            "daily": "каждый день",
+            "weekly": "каждую неделю",
+            "monthly": "каждый месяц",
+            "weekdays": "по будням",
+        }
+        await message.answer(
+            f"🔄 Повторяющаяся задача: <b>{parsed['task']}</b>\n"
+            f"📅 Начало: {task.get('due_date', today)}\n"
+            f"🔁 Повтор: {rec_label.get(rec_type, rec_type)}",
+            reply_markup=main_keyboard(),
+        )
+    else:
+        await safe_answer(message, result, reply_markup=main_keyboard())
+
+
 async def _parse_and_create_task(message: Message, user_id: int, text: str) -> None:
     """Парсинг текста задачи через LLM и создание."""
     today = datetime.now(MSK).strftime("%Y-%m-%d")
@@ -916,6 +989,9 @@ async def cmd_add_goal(message: Message, db_user: dict) -> None:
             f"Тип: {goal_type}",
             reply_markup=main_keyboard(),
         )
+        # Обновить Goals Dashboard в Obsidian
+        goals = await get_active_goals(user_id)
+        await obsidian.update_goals_dashboard(goals)
     else:
         await safe_answer(message, result, reply_markup=main_keyboard())
 
@@ -949,6 +1025,10 @@ async def cmd_progress(message: Message, db_user: dict) -> None:
         update_data["achieved_at"] = datetime.now(timezone.utc)
 
     await update_goal(goal_id, user_id, **update_data)
+
+    # Обновить Goals Dashboard в Obsidian
+    goals = await get_active_goals(user_id)
+    await obsidian.update_goals_dashboard(goals)
 
     emoji = "🎉" if pct >= 100 else "📈"
     await message.answer(
@@ -1014,6 +1094,9 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
                 f"{emoji} Добавлено: <b>{parsed['title']}</b>",
                 reply_markup=main_keyboard(),
             )
+            # Обновить Goals Dashboard в Obsidian
+            goals_list = await get_active_goals(user_id)
+            await obsidian.update_goals_dashboard(goals_list)
         else:
             await safe_answer(message, result, reply_markup=main_keyboard())
         return

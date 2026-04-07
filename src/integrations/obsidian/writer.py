@@ -198,21 +198,159 @@ class ObsidianWriter:
             note_type="idea",
         )
 
-    async def log_goal_update(self, goal_title: str, progress: int, note: str = "") -> None:
-        """Обновить прогресс цели в дашборде."""
+    async def update_goals_dashboard(self, goals: list[dict]) -> None:
+        """Полная перегенерация 03-Dashboards/Goals.md из списка целей (9.2.6)."""
         if not self.enabled:
             return
-        path = self.vault / "03-Dashboards" / "Dashboard — Цели.md"
-        if not path.exists():
+        path = self.vault / "03-Dashboards" / "Goals.md"
+        self._ensure_dir(path)
+
+        now = datetime.now(MSK).strftime("%Y-%m-%d %H:%M")
+        type_emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}
+        type_label = {"dream": "Мечта", "yearly_goal": "Годовая цель", "habit_target": "Привычка"}
+
+        lines: list[str] = [
+            "---",
+            f"updated: {now}",
+            "---",
+            "",
+            "# 🎯 Цели и Мечты",
+            "",
+        ]
+
+        if not goals:
+            lines.append("_Нет активных целей._")
+        else:
+            # Таблица для Dataview
+            lines.append("| Статус | Тип | Цель | Прогресс | Дедлайн |")
+            lines.append("|--------|-----|------|----------|---------|")
+            for g in goals:
+                gtype = g.get("type", "yearly_goal")
+                emoji = type_emoji.get(gtype, "📌")
+                label = type_label.get(gtype, gtype)
+                pct = g.get("progress_pct", 0)
+                title = g.get("title", "")
+                status = g.get("status", "active")
+                target = g.get("target_date")
+                target_str = str(target) if target else "—"
+                bar_filled = round(pct / 10)
+                bar = "▓" * bar_filled + "░" * (10 - bar_filled)
+                status_icon = "✅" if status == "achieved" else "⏳"
+                lines.append(
+                    f"| {status_icon} | {emoji} {label} | {title} | {bar} {pct}% | {target_str} |"
+                )
+
+            lines.append("")
+
+            # Детальные карточки
+            for g in goals:
+                gtype = g.get("type", "yearly_goal")
+                emoji = type_emoji.get(gtype, "📌")
+                title = g.get("title", "")
+                desc = g.get("description", "")
+                pct = g.get("progress_pct", 0)
+                gid = g.get("id", "")
+
+                lines.append(f"## {emoji} {title}")
+                lines.append("")
+                lines.append(f"- **ID:** {gid}")
+                lines.append(f"- **Тип:** {type_label.get(gtype, gtype)}")
+                lines.append(f"- **Прогресс:** {pct}%")
+                if desc:
+                    lines.append(f"- **Описание:** {desc}")
+                target = g.get("target_date")
+                if target:
+                    lines.append(f"- **Дедлайн:** {target}")
+                achieved = g.get("achieved_at")
+                if achieved:
+                    lines.append(f"- **Достигнуто:** {achieved}")
+                lines.append("")
+
+        path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("obsidian.goals_dashboard", count=len(goals))
+
+    async def update_project_readme(
+        self,
+        project: dict,
+        finance_rows: list[dict],
+        recent_events: list[dict] | None = None,
+    ) -> None:
+        """Обновить 05-Projects/{name}/README.md с метаданными и финсводкой (9.2.7)."""
+        if not self.enabled:
             return
-        content = path.read_text(encoding="utf-8")
-        now = datetime.now(MSK).strftime("%d.%m.%Y")
-        update_line = f"\n- {now}: {goal_title} — {progress}%"
-        if note:
-            update_line += f" ({note})"
-        content += update_line
-        path.write_text(content, encoding="utf-8")
-        logger.info("obsidian.goal_update", goal=goal_title, progress=progress)
+        name = project.get("name", "Unknown")
+        safe_name = re.sub(r"[^\w\s-]", "", name).strip().replace(" ", "-")
+        path = self.vault / "05-Projects" / safe_name / "README.md"
+        self._ensure_dir(path)
+
+        now = datetime.now(MSK).strftime("%Y-%m-%d %H:%M")
+        ptype = project.get("type", "solo")
+        status = project.get("status", "active")
+        collabs = project.get("collaborators", [])
+        created = project.get("created_at", "")
+
+        # Финансовая сводка из SQL-данных
+        income = sum(r["total"] for r in finance_rows if r.get("transaction_type") == "income")
+        expense = sum(r["total"] for r in finance_rows if r.get("transaction_type") == "expense")
+        balance = income - expense
+
+        lines: list[str] = [
+            "---",
+            f"project: {name}",
+            f"type: {ptype}",
+            f"status: {status}",
+            f"updated: {now}",
+            "---",
+            "",
+            f"# 📁 {name}",
+            "",
+            "## Метаданные",
+            "",
+            f"- **Тип:** {ptype}",
+            f"- **Статус:** {status}",
+            f"- **Создан:** {created}",
+        ]
+        if collabs:
+            lines.append(f"- **Collaborators:** {', '.join(str(c) for c in collabs)}")
+        lines.append("")
+
+        # Финансы
+        lines.append("## 💰 Финансы")
+        lines.append("")
+        bal_emoji = "✅" if balance >= 0 else "🔴"
+        lines.append(f"| Показатель | Сумма |")
+        lines.append(f"|-----------|-------|")
+        lines.append(f"| 💵 Доход | {income:,.0f} ₽ |")
+        lines.append(f"| 💰 Расход | {expense:,.0f} ₽ |")
+        lines.append(f"| {bal_emoji} Баланс | {balance:,.0f} ₽ |")
+        lines.append("")
+
+        # Расходы по категориям
+        expense_cats = [r for r in finance_rows if r.get("transaction_type") == "expense"]
+        if expense_cats:
+            lines.append("### Расходы по категориям")
+            lines.append("")
+            lines.append("| Категория | Сумма |")
+            lines.append("|-----------|-------|")
+            for r in expense_cats:
+                lines.append(f"| {r.get('category', '—')} | {r['total']:,.0f} ₽ |")
+            lines.append("")
+
+        # Последние события
+        if recent_events:
+            lines.append("## 📋 Последние события")
+            lines.append("")
+            for ev in recent_events[:10]:
+                ts = ev.get("created_at", "")
+                if hasattr(ts, "strftime"):
+                    ts = ts.strftime("%d.%m.%Y")
+                etype = ev.get("event_type", "")
+                raw = (ev.get("raw_text") or "")[:80]
+                lines.append(f"- **{ts}** [{etype}] {raw}")
+            lines.append("")
+
+        path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("obsidian.project_readme", project=name)
 
     async def log_task_to_daily(self, task_text: str, due_time: str = "", priority: str = "") -> None:
         """Добавить задачу в Daily Note (формат Tasks-плагина)."""

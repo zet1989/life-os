@@ -19,6 +19,8 @@ from src.core.context import save_assistant_reply
 from src.db.queries import (
     create_event,
     get_finance_summary,
+    get_project,
+    get_project_events,
     get_projects_by_type,
 )
 from src.bots.mentor.keyboard import (
@@ -214,6 +216,13 @@ async def _attach_idea_to_project(
     await store_event_embedding(event["id"], text, user_id=user_id, bot_source=BOT_SOURCE)
     await obsidian.log_idea(text, source="mentor")
 
+    # Обновить Project README в Obsidian
+    proj = await get_project(project_id)
+    if proj:
+        fin = await get_finance_summary(project_id)
+        evts = await get_project_events(project_id, limit=10)
+        await obsidian.update_project_readme(proj, fin, evts)
+
     if callback.message:
         await callback.message.answer(result, reply_markup=main_keyboard())  # type: ignore[union-attr]
     await save_assistant_reply(user_id, BOT_SOURCE, result)
@@ -253,6 +262,13 @@ async def _attach_discussion_to_project(
         project_id=project_id,
     )
     await store_event_embedding(event["id"], transcript, user_id=user_id, bot_source=BOT_SOURCE)
+
+    # Обновить Project README в Obsidian
+    proj = await get_project(project_id)
+    if proj:
+        fin = await get_finance_summary(project_id)
+        evts = await get_project_events(project_id, limit=10)
+        await obsidian.update_project_readme(proj, fin, evts)
 
     if callback.message:
         await callback.message.answer(result, reply_markup=main_keyboard())  # type: ignore[union-attr]
@@ -502,6 +518,13 @@ async def _attach_idea_direct(
         project_id=project_id,
     )
     await store_event_embedding(event["id"], text, user_id=user_id, bot_source=BOT_SOURCE)
+
+    # Обновить Project README в Obsidian
+    proj = await get_project(project_id)
+    if proj:
+        fin = await get_finance_summary(project_id)
+        evts = await get_project_events(project_id, limit=10)
+        await obsidian.update_project_readme(proj, fin, evts)
 
     await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)

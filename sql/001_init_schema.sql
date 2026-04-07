@@ -146,6 +146,8 @@ CREATE TABLE tasks (
     project_id INT REFERENCES projects(project_id),
     is_done BOOLEAN DEFAULT FALSE,
     reminder_sent BOOLEAN DEFAULT FALSE,
+    recurrence TEXT DEFAULT NULL,             -- NULL, daily, weekly, monthly, weekdays
+    recurrence_parent_id INT REFERENCES tasks(id),
     done_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()

@@ -211,6 +211,34 @@ async def create_finance(
     return dict(row)
 
 
+async def delete_finance(finance_id: int, user_id: int) -> bool:
+    """Удалить транзакцию (ACL: только владелец)."""
+    result = await get_pool().execute(
+        "DELETE FROM finances WHERE id = $1 AND user_id = $2",
+        finance_id, user_id,
+    )
+    return result != "DELETE 0"
+
+
+async def get_recent_finances(user_id: int, project_id: int | None = None, limit: int = 10) -> list[dict]:
+    """Последние транзакции пользователя."""
+    if project_id:
+        rows = await get_pool().fetch(
+            """SELECT * FROM finances
+               WHERE user_id = $1 AND project_id = $2
+               ORDER BY timestamp DESC LIMIT $3""",
+            user_id, project_id, limit,
+        )
+    else:
+        rows = await get_pool().fetch(
+            """SELECT * FROM finances
+               WHERE user_id = $1
+               ORDER BY timestamp DESC LIMIT $2""",
+            user_id, limit,
+        )
+    return [dict(r) for r in rows]
+
+
 async def get_finance_summary(project_id: int) -> list[dict]:
     """Сводка расходов/доходов по категориям для проекта (SQL only)."""
     rows = await get_pool().fetch(
@@ -219,6 +247,17 @@ async def get_finance_summary(project_id: int) -> list[dict]:
            GROUP BY transaction_type, category
            ORDER BY transaction_type, total DESC""",
         project_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_project_events(project_id: int, limit: int = 10) -> list[dict]:
+    """Последние события проекта."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM events
+           WHERE project_id = $1
+           ORDER BY timestamp DESC LIMIT $2""",
+        project_id, limit,
     )
     return [dict(r) for r in rows]
 
@@ -591,14 +630,15 @@ async def create_task(
     project_id: int | None = None,
     source: str = "telegram",
     source_file: str | None = None,
+    recurrence: str | None = None,
 ) -> dict:
-    """Создать задачу."""
+    """Create a task, optionally recurring."""
     row = await get_pool().fetchrow(
         """INSERT INTO tasks (user_id, task_text, due_date, due_time, priority,
-                              project_id, source, source_file)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *""",
+                              project_id, source, source_file, recurrence)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *""",
         user_id, task_text, _parse_date(due_date), _parse_time(due_time), priority,
-        project_id, source, source_file,
+        project_id, source, source_file, recurrence,
     )
     return dict(row)
 
@@ -697,6 +737,49 @@ async def reschedule_task(task_id: int, user_id: int, new_date: str) -> bool:
         task_id, user_id, _parse_date(new_date),
     )
     return result != "UPDATE 0"
+
+
+async def get_recurring_tasks_due(target_date: str) -> list[dict]:
+    """Повторяющиеся задачи, которые нужно создать на target_date."""
+    d = _parse_date(target_date)
+    dow = d.weekday() if d else 0  # 0=Mon ... 6=Sun
+    rows = await get_pool().fetch(
+        """SELECT * FROM tasks
+           WHERE recurrence IS NOT NULL
+             AND recurrence_parent_id IS NULL
+             AND is_done = FALSE
+             AND NOT EXISTS (
+                 SELECT 1 FROM tasks t2
+                 WHERE t2.recurrence_parent_id = tasks.id
+                   AND t2.due_date = $1
+             )""",
+        d,
+    )
+    result = []
+    for r in rows:
+        rec = r["recurrence"]
+        if rec == "daily":
+            result.append(dict(r))
+        elif rec == "weekdays" and dow < 5:
+            result.append(dict(r))
+        elif rec == "weekly" and r["due_date"] and r["due_date"].weekday() == dow:
+            result.append(dict(r))
+        elif rec == "monthly" and r["due_date"] and r["due_date"].day == d.day:
+            result.append(dict(r))
+    return result
+
+
+async def spawn_recurring_task(parent: dict, target_date: str) -> dict:
+    """Создать экземпляр повторяющейся задачи."""
+    row = await get_pool().fetchrow(
+        """INSERT INTO tasks (user_id, task_text, due_date, due_time, priority,
+                              project_id, source, recurrence_parent_id)
+           VALUES ($1, $2, $3, $4, $5, $6, 'telegram', $7) RETURNING *""",
+        parent["user_id"], parent["task_text"], _parse_date(target_date),
+        parent.get("due_time"), parent.get("priority", "normal"),
+        parent.get("project_id"), parent["id"],
+    )
+    return dict(row)
 
 
 async def delete_task(task_id: int, user_id: int) -> bool:
