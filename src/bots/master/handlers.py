@@ -1358,6 +1358,44 @@ async def cmd_eisenhower_matrix(message: Message, db_user: dict) -> None:
     await safe_answer(message, text)
 
 
+# === /mindmap — Mind Map из идей ===
+
+@router.message(Command("mindmap"))
+async def cmd_mindmap(message: Message, db_user: dict) -> None:
+    """Генерация Mind Map — граф идей сгруппированных по проектам."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    from src.db.queries import get_ideas_for_mindmap
+    ideas = await get_ideas_for_mindmap(user_id)
+
+    if not ideas:
+        await message.answer("💡 Нет записанных идей для Mind Map.")
+        return
+
+    from src.integrations.obsidian.writer import obsidian
+    await obsidian.generate_mindmap(ideas)
+
+    # Группируем для ответа в Telegram
+    by_project: dict[str, list] = {}
+    for idea in ideas:
+        proj = idea.get("project_name", "Без проекта")
+        by_project.setdefault(proj, []).append(idea)
+
+    text = "🧠 <b>Mind Map — Идеи</b>\n\n"
+    for proj, proj_ideas in by_project.items():
+        text += f"📁 <b>{proj}</b> ({len(proj_ideas)})\n"
+        for idea in proj_ideas[:5]:
+            raw = (idea.get("raw_text") or "")[:60].strip()
+            text += f"  💡 {raw}\n"
+        if len(proj_ideas) > 5:
+            text += f"  <i>...ещё {len(proj_ideas) - 5}</i>\n"
+        text += "\n"
+
+    text += f"📊 Всего: <b>{len(ideas)}</b> идей в <b>{len(by_project)}</b> проектах\n"
+    text += "📂 Файл: <code>03-Dashboards/MindMap.md</code>"
+
+    await safe_answer(message, text)
+
+
 # === /repeat — создать повторяющуюся задачу ===
 
 @router.message(Command("repeat"))

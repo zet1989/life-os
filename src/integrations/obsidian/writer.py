@@ -682,6 +682,69 @@ class ObsidianWriter:
         path.write_text("\n".join(lines), encoding="utf-8")
         logger.info("obsidian.kanban_generated", tasks=sum(len(v) for v in kanban_data.values()))
 
+    # ---------------------------------------------------------------
+    # Mind Map из идей (Mermaid)
+    # ---------------------------------------------------------------
+
+    async def generate_mindmap(self, ideas: list[dict]) -> None:
+        """Сгенерировать 03-Dashboards/MindMap.md — граф идей (Mermaid mindmap)."""
+        if not self.enabled:
+            return
+
+        path = self.vault / "03-Dashboards" / "MindMap.md"
+        self._ensure_dir(path)
+
+        now = datetime.now(MSK).strftime("%Y-%m-%d %H:%M")
+
+        # Группируем идеи по проекту
+        by_project: dict[str, list[dict]] = {}
+        for idea in ideas:
+            proj = idea.get("project_name", "Без проекта")
+            by_project.setdefault(proj, []).append(idea)
+
+        lines: list[str] = [
+            "---",
+            f"updated: {now}",
+            "---",
+            "",
+            "# 🧠 Mind Map — Идеи",
+            "",
+            "```mermaid",
+            "mindmap",
+            "  root((💡 Идеи))",
+        ]
+
+        for proj, proj_ideas in by_project.items():
+            # Sanitize project name for Mermaid (remove special chars)
+            safe_proj = re.sub(r"[()\"'`{}]", "", proj)
+            lines.append(f"    {safe_proj}")
+            for idea in proj_ideas[:15]:  # max 15 per project
+                raw = (idea.get("raw_text") or "")[:60].strip()
+                # Sanitize idea text for Mermaid
+                safe_text = re.sub(r"[()\"'`{}\\]", "", raw)
+                if safe_text:
+                    lines.append(f"      {safe_text}")
+
+        lines.append("```")
+        lines.append("")
+
+        # Также добавляем текстовый список для поиска
+        lines.append("## 📋 Полный список идей")
+        lines.append("")
+        for proj, proj_ideas in by_project.items():
+            lines.append(f"### {proj}")
+            lines.append("")
+            for idea in proj_ideas:
+                raw = (idea.get("raw_text") or "")[:120].strip()
+                ts = idea.get("timestamp")
+                date_str = ts.strftime("%d.%m.%Y") if hasattr(ts, "strftime") else str(ts)[:10]
+                src = idea.get("bot_source", "")
+                lines.append(f"- **{date_str}** [{src}] {raw}")
+            lines.append("")
+
+        path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("obsidian.mindmap_generated", ideas=len(ideas), projects=len(by_project))
+
 
 # Синглтон
 obsidian = ObsidianWriter()

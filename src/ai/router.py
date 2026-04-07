@@ -31,14 +31,20 @@ async def get_model_config(task_type: str) -> dict:
 
     config = await _db_get_model_config(task_type)
     if config is None:
-        # Для бизнес-задач по умолчанию умная модель
-        if task_type == "business_strategy":
+        # Стратегические задачи → Claude Sonnet 4
+        if task_type in (
+            "mentor_idea", "mentor_discussion", "mentor_strategy", "mentor_report",
+            "master_audit", "master_goal", "master_talk", "quarterly_audit",
+            "psychology_diary", "psychology_report", "diary_reflection",
+            "business_strategy",
+        ):
             config = {
-                "model": "openai/gpt-4o",
+                "model": "anthropic/claude-sonnet-4",
                 "max_tokens": 2000,
-                "temperature": 0.4,
-                "fallback_model": "openai/gpt-4o-mini",
+                "temperature": 0.5,
+                "fallback_model": "openai/gpt-4o",
             }
+        # Критичные медицинские → GPT-4o
         elif task_type == "doctor_consult":
             config = {
                 "model": "openai/gpt-4o",
@@ -48,7 +54,7 @@ async def get_model_config(task_type: str) -> dict:
             }
         else:
             config = {
-                "model": "gpt-4o-mini",
+                "model": "openai/gpt-4o-mini",
                 "max_tokens": 1000,
                 "temperature": 0.5,
                 "fallback_model": None,

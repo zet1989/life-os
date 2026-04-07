@@ -77,6 +77,16 @@ services:
       - "22000:22000/udp"
       - "21027:21027/udp" # Discovery
 
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    restart: unless-stopped
+    volumes:
+      - uptime_kuma_data:/app/data
+    ports:
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      - bot
+
 volumes:
   pg_data:
   pg_backups:
@@ -85,3 +95,4 @@ volumes:
   whisper_cache:
   syncthing_config:
   obsidian_vault:
+  uptime_kuma_data:

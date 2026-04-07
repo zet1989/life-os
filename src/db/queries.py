@@ -1300,3 +1300,20 @@ async def get_obsidian_today_tasks(user_id: int) -> list[dict]:
         user_id,
     )
     return [dict(r) for r in rows]
+
+
+async def get_ideas_for_mindmap(user_id: int, limit: int = 200) -> list[dict]:
+    """Идеи пользователя сгруппированные по проектам для Mind Map."""
+    rows = await get_pool().fetch(
+        """SELECT e.id, e.raw_text, e.timestamp, e.project_id,
+                  COALESCE(p.name, 'Без проекта') AS project_name,
+                  e.bot_source
+           FROM events e
+           LEFT JOIN projects p ON e.project_id = p.project_id
+           WHERE e.user_id = $1
+             AND e.event_type = 'idea'
+           ORDER BY e.timestamp DESC
+           LIMIT $2""",
+        user_id, limit,
+    )
+    return [dict(r) for r in rows]
