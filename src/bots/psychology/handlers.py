@@ -18,7 +18,7 @@ from src.ai.router import chat
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer
-from src.db.queries import create_event, get_active_goals, get_cross_bot_summary, get_life_profile, get_user, update_user_settings
+from src.db.queries import create_event, get_active_goals, get_cross_bot_summary, get_gratitude_today, get_life_profile, get_user, update_user_settings
 from src.bots.psychology.keyboard import (
     Mode,
     get_user_mode,
@@ -230,6 +230,36 @@ async def mode_add_habit(message: Message, db_user: dict) -> None:
     )
 
 
+@router.message(F.text == "🙏 Благодарности")
+async def mode_gratitude(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.GRATITUDE)
+
+    entries = await get_gratitude_today(user_id)
+    count = len(entries)
+
+    if count >= 3:
+        text = "🙏 <b>Благодарности за сегодня:</b>\n\n"
+        for i, e in enumerate(entries, 1):
+            text += f"{i}. {e.get('raw_text', '')}\n"
+        text += f"\n✅ Отлично! Ты записал {count} благодарност{'и' if 2 <= count <= 4 else 'ей'}."
+    elif count > 0:
+        text = "🙏 <b>Благодарности за сегодня:</b>\n\n"
+        for i, e in enumerate(entries, 1):
+            text += f"{i}. {e.get('raw_text', '')}\n"
+        text += f"\n✏️ Осталось ещё {3 - count}. За что ты ещё благодарен сегодня?"
+    else:
+        text = (
+            "🙏 <b>Журнал благодарностей</b>\n\n"
+            "Напиши 3 вещи, за которые ты благодарен сегодня.\n"
+            "Это могут быть мелочи: вкусный кофе, хорошая погода, "
+            "поддержка близких.\n\n"
+            "✏️ Просто напиши — по одной за раз."
+        )
+
+    await message.answer(text, reply_markup=main_keyboard())
+
+
 @router.message(F.text == "📋 Мой профиль")
 async def mode_profile(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
@@ -407,6 +437,11 @@ async def handle_text(message: Message, db_user: dict) -> None:
         await _process_profile_psy(message, user_id, text)
         return
 
+    # Режим «Благодарности» — сохраняем запись
+    if get_user_mode(user_id) == Mode.GRATITUDE:
+        await _process_gratitude(message, user_id, text)
+        return
+
     await _process_diary(message, user_id, text)
 
 
@@ -476,3 +511,35 @@ async def _process_profile_psy(message: Message, user_id: int, text: str) -> Non
         "Профиль общий для 🏥 Здоровье и 🧠 Психолог.",
         reply_markup=main_keyboard(),
     )
+
+
+async def _process_gratitude(message: Message, user_id: int, text: str) -> None:
+    """Сохранить запись благодарности."""
+    event = await create_event(
+        user_id=user_id,
+        event_type="gratitude",
+        bot_source=BOT_SOURCE,
+        raw_text=text.strip(),
+    )
+
+    await store_event_embedding(event["id"], f"Благодарность: {text}", user_id, BOT_SOURCE)
+
+    entries = await get_gratitude_today(user_id)
+    count = len(entries)
+
+    if count >= 3:
+        lines = "🙏 <b>Благодарности за сегодня:</b>\n\n"
+        for i, e in enumerate(entries, 1):
+            lines += f"{i}. {e.get('raw_text', '')}\n"
+        lines += (
+            "\n🌟 <b>Отлично!</b> Ты записал 3 благодарности.\n"
+            "Практика благодарности снижает тревогу и повышает удовлетворённость жизнью."
+        )
+        set_user_mode(user_id, Mode.DIARY)
+        await message.answer(lines, reply_markup=main_keyboard())
+    else:
+        remaining = 3 - count
+        await message.answer(
+            f"🙏 Записал! Осталось ещё {remaining}. Продолжай.",
+            reply_markup=main_keyboard(),
+        )

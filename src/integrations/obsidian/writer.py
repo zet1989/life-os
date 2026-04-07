@@ -461,6 +461,89 @@ class ObsidianWriter:
                 logger.info("obsidian.task_uncompleted", task=task_text, file=str(path))
                 return
 
+    # ---------------------------------------------------------------
+    # Weekly Notes (сводка недели)
+    # ---------------------------------------------------------------
+
+    def _weekly_path(self, date: datetime | None = None) -> Path:
+        d = date or datetime.now(MSK)
+        year, week, _ = d.isocalendar()
+        return self.vault / "04-Daily" / f"Week-{year}-W{week:02d}.md"
+
+    async def generate_weekly_note(self, summary: dict, events_by_type: dict, goals: list[dict]) -> None:
+        """Создать/обновить Weekly Note в 04-Daily/Week-YYYY-WNN.md."""
+        if not self.enabled:
+            return
+
+        now = datetime.now(MSK)
+        path = self._weekly_path(now)
+        self._ensure_dir(path)
+
+        year, week, _ = now.isocalendar()
+        type_emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}
+
+        lines: list[str] = [
+            "---",
+            f"type: weekly",
+            f"week: {year}-W{week:02d}",
+            f"generated: {now.strftime('%Y-%m-%d %H:%M')}",
+            "---",
+            "",
+            f"# 📋 Неделя {week}, {year}",
+            "",
+            "## ✅ Задачи",
+            "",
+            f"- Выполнено: **{summary.get('completed', 0)}**",
+            f"- Создано: **{summary.get('created', 0)}**",
+            "",
+            "## 💰 Финансы",
+            "",
+            f"- 💵 Доход: **{summary.get('week_income', 0):,.0f} ₽**",
+            f"- 💸 Расход: **{summary.get('week_expense', 0):,.0f} ₽**",
+        ]
+        balance = summary.get("week_income", 0) - summary.get("week_expense", 0)
+        b_emoji = "✅" if balance >= 0 else "🔴"
+        lines.append(f"- {b_emoji} Баланс: **{balance:,.0f} ₽**")
+        lines.append("")
+
+        # Активность по типам событий
+        if events_by_type:
+            lines.append("## 📊 Активность")
+            lines.append("")
+            type_labels = {
+                "meal": "🍽 Приёмы пищи",
+                "workout": "🏋️ Тренировки",
+                "diary": "📝 Дневник",
+                "habit": "✅ Привычки",
+                "finance": "💰 Финансы",
+                "gratitude": "🙏 Благодарности",
+                "focus": "🎯 Фокус дня",
+                "weight": "⚖️ Вес",
+                "water": "💧 Вода",
+                "doctor": "👨‍⚕️ Доктор",
+                "mood": "😊 Настроение",
+            }
+            for etype, cnt in sorted(events_by_type.items(), key=lambda x: -x[1]):
+                label = type_labels.get(etype, etype)
+                lines.append(f"- {label}: **{cnt}**")
+            lines.append("")
+
+        # Цели
+        if goals:
+            lines.append("## 🎯 Цели")
+            lines.append("")
+            for g in goals:
+                gtype = g.get("type", "yearly_goal")
+                emoji = type_emoji.get(gtype, "📌")
+                pct = g.get("progress_pct", 0)
+                bar_filled = round(pct / 10)
+                bar = "▓" * bar_filled + "░" * (10 - bar_filled)
+                lines.append(f"- {emoji} {g.get('title', '')} {bar} {pct}%")
+            lines.append("")
+
+        path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("obsidian.weekly_note", file=str(path), week=f"{year}-W{week:02d}")
+
 
 # Синглтон
 obsidian = ObsidianWriter()

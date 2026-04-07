@@ -34,6 +34,7 @@ from src.db.queries import (
     get_today_tasks,
     get_unclosed_tasks,
     get_user_projects,
+    get_week_events_by_type,
     get_week_summary,
     mark_obsidian_reminder_sent,
     mark_reminder_sent,
@@ -198,6 +199,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=CronTrigger(day_of_week="sun", hour=20, minute=0),
         args=[bot],
         id="weekly_review",
+        replace_existing=True,
+    )
+
+    # Weekly Notes Obsidian — воскресенье 20:30 (после weekly review)
+    scheduler.add_job(
+        generate_weekly_obsidian_note,
+        trigger=CronTrigger(day_of_week="sun", hour=20, minute=30),
+        id="weekly_obsidian_note",
         replace_existing=True,
     )
 
@@ -495,3 +504,22 @@ async def _send_weekly_to_user(bot: Bot, user_id: int) -> None:
 
     except Exception:
         logger.exception("weekly_user_failed", user_id=user_id)
+
+
+# === Weekly Notes Obsidian ===
+
+async def generate_weekly_obsidian_note() -> None:
+    """Сгенерировать Weekly Note в Obsidian для каждого admin."""
+    try:
+        from src.integrations.obsidian.writer import obsidian
+
+        admins = await get_admin_users()
+        for admin in admins:
+            user_id = admin["user_id"]
+            summary = await get_week_summary(user_id)
+            events_by_type = await get_week_events_by_type(user_id)
+            goals = await get_active_goals(user_id)
+            await obsidian.generate_weekly_note(summary, events_by_type, goals)
+            logger.info("weekly_obsidian_note_generated", user_id=user_id)
+    except Exception:
+        logger.exception("weekly_obsidian_note_failed")

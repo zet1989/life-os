@@ -15,7 +15,7 @@ from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer, safe_edit
-from src.db.queries import create_event, get_today_meals, get_today_water, get_today_workouts, get_user, update_user_settings
+from src.db.queries import create_event, get_today_meals, get_today_water, get_today_workouts, get_user, get_weight_history, update_user_settings
 from src.bots.health.prompts import (
     DOCTOR_PHOTO_PROMPT,
     DOCTOR_SYSTEM,
@@ -249,6 +249,109 @@ async def _water_status(user_id: int) -> str:
     return text
 
 
+# === ⚖️ Вес и замеры ===
+
+@router.message(F.text == "⚖️ Вес")
+async def mode_weight(message: Message) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.WEIGHT)
+    history = await get_weight_history(user_id, limit=10)
+
+    text = "⚖️ <b>Вес и замеры тела</b>\n\n"
+
+    if history:
+        text += "<b>Последние записи:</b>\n"
+        for h in history:
+            jd = h.get("json_data") or {}
+            ts = h.get("timestamp")
+            date_str = ts.strftime("%d.%m.%Y") if hasattr(ts, "strftime") else ""
+            weight = jd.get("weight_kg")
+            if weight:
+                text += f"  📅 {date_str} — <b>{weight} кг</b>"
+                if jd.get("fat_pct"):
+                    text += f" | жир: {jd['fat_pct']}%"
+                if jd.get("waist_cm"):
+                    text += f" | талия: {jd['waist_cm']} см"
+                text += "\n"
+
+        # Тренд
+        if len(history) >= 2:
+            first_jd = history[0].get("json_data") or {}
+            last_jd = history[-1].get("json_data") or {}
+            w_now = first_jd.get("weight_kg")
+            w_prev = last_jd.get("weight_kg")
+            if w_now and w_prev:
+                diff = w_now - w_prev
+                emoji = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                text += f"\n{emoji} Тренд: <b>{diff:+.1f} кг</b> за {len(history)} записей\n"
+    else:
+        text += "Записей пока нет.\n"
+
+    text += (
+        "\n<b>Формат записи:</b>\n"
+        "<code>85.5</code> — только вес\n"
+        "<code>85.5 жир 18.5 талия 90</code> — с замерами"
+    )
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+async def _process_weight_text(message: Message, user_id: int, text: str) -> None:
+    """Обработка записи веса/замеров."""
+    import re
+
+    # Парсим вес
+    weight_match = re.search(r"(\d+(?:[.,]\d+)?)", text)
+    if not weight_match:
+        await message.answer(
+            "Введи вес числом, например: <code>85.5</code>",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    weight = float(weight_match.group(1).replace(",", "."))
+    if weight < 20 or weight > 300:
+        await message.answer("Введи реальный вес (20-300 кг).", reply_markup=main_keyboard())
+        return
+
+    json_data: dict = {"weight_kg": weight}
+
+    # Опциональные замеры
+    fat_match = re.search(r"жир\s*(\d+(?:[.,]\d+)?)", text, re.IGNORECASE)
+    if fat_match:
+        json_data["fat_pct"] = float(fat_match.group(1).replace(",", "."))
+
+    waist_match = re.search(r"тали[яю]\s*(\d+(?:[.,]\d+)?)", text, re.IGNORECASE)
+    if waist_match:
+        json_data["waist_cm"] = float(waist_match.group(1).replace(",", "."))
+
+    await create_event(
+        user_id=user_id,
+        event_type="weight",
+        bot_source="health",
+        raw_text=text,
+        json_data=json_data,
+    )
+
+    response = f"⚖️ Записано: <b>{weight} кг</b>"
+    if json_data.get("fat_pct"):
+        response += f" | жир: {json_data['fat_pct']}%"
+    if json_data.get("waist_cm"):
+        response += f" | талия: {json_data['waist_cm']} см"
+
+    # Сравнение с предыдущей записью
+    history = await get_weight_history(user_id, limit=2)
+    if len(history) >= 2:
+        prev_jd = history[1].get("json_data") or {}
+        prev_w = prev_jd.get("weight_kg")
+        if prev_w:
+            diff = weight - prev_w
+            emoji = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+            response += f"\n{emoji} Изменение: <b>{diff:+.1f} кг</b>"
+
+    await message.answer(response, reply_markup=main_keyboard())
+    set_user_mode(user_id, Mode.FOOD)
+
+
 # === /settings (backward compat) ===
 
 @router.message(Command("settings"))
@@ -328,6 +431,8 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
         await _process_profile(message, user_id, text)
     elif mode == Mode.WATER:
         await _process_water_text(message, user_id, text)
+    elif mode == Mode.WEIGHT:
+        await _process_weight_text(message, user_id, text)
     else:
         await _process_food_text(message, user_id, text)
 
@@ -348,6 +453,8 @@ async def handle_text(message: Message, db_user: dict) -> None:
         await _process_profile(message, user_id, text)
     elif mode == Mode.WATER:
         await _process_water_text(message, user_id, text)
+    elif mode == Mode.WEIGHT:
+        await _process_weight_text(message, user_id, text)
     else:
         await _process_food_text(message, user_id, text)
 

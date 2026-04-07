@@ -41,6 +41,7 @@ from src.db.queries import (
     get_project,
     get_task_by_id,
     get_tasks_by_date,
+    get_today_focus,
     get_today_tasks,
     get_user_projects,
     get_week_tasks,
@@ -329,6 +330,37 @@ async def btn_status(message: Message, db_user: dict) -> None:
     await cmd_status(message, db_user)
 
 
+# === Фокус дня ===
+
+@router.message(F.text == "🎯 Фокус дня")
+async def mode_focus(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.FOCUS)
+
+    focus = await get_today_focus(user_id)
+    if focus:
+        text = (
+            f"🎯 <b>Фокус дня:</b>\n\n"
+            f"<b>{focus.get('raw_text', '')}</b>\n\n"
+            "Чтобы изменить — просто напиши новый фокус."
+        )
+    else:
+        tasks = await get_today_tasks(user_id)
+        undone = [t for t in tasks if not t["is_done"]]
+
+        text = "🎯 <b>Фокус дня</b>\n\n"
+        if undone:
+            text += "Твои задачи на сегодня:\n"
+            for i, t in enumerate(undone[:5], 1):
+                prio = PRIORITY_EMOJI.get(t.get("priority", "normal"), "")
+                text += f"  {i}. {t['task_text']} {prio}\n"
+            text += "\nНапиши главную задачу на сегодня — одну, самую важную."
+        else:
+            text += "Нет задач на сегодня. Напиши, на что сфокусируешься."
+
+    await message.answer(text, reply_markup=main_keyboard())
+
+
 # === Задачи (Планировщик) ===
 
 PRIORITY_EMOJI = {"low": "⬜", "normal": "🔵", "high": "🟠", "urgent": "🔴"}
@@ -379,8 +411,13 @@ async def _show_today_tasks(message: Message, user_id: int, edit: bool = False) 
     tasks = await get_today_tasks(user_id)
     overdue = await get_overdue_tasks(user_id)
     obs_tasks = await get_obsidian_today_tasks(user_id)
+    focus = await get_today_focus(user_id)
 
     text = f"📋 <b>Задачи на {today}</b>\n\n"
+
+    # Фокус дня
+    if focus:
+        text += f"🎯 Фокус: <b>{focus.get('raw_text', '')}</b>\n\n"
 
     if not tasks and not overdue and not obs_tasks:
         text += "Задач на сегодня нет. Добавь через ➕ или напиши текст.\n"
@@ -1257,6 +1294,22 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
         # Добавление задачи через текст
         set_user_mode(user_id, Mode.TASKS)
         await _parse_and_create_task(message, user_id, text)
+        return
+
+    if mode == Mode.FOCUS:
+        # Установить фокус дня
+        await create_event(
+            user_id=user_id,
+            event_type="focus",
+            bot_source=BOT_SOURCE,
+            raw_text=text.strip()[:200],
+        )
+        set_user_mode(user_id, Mode.TALK)
+        await message.answer(
+            f"🎯 Фокус дня установлен:\n\n<b>{text.strip()[:200]}</b>\n\n"
+            "Держи его перед глазами. Не распыляйся.",
+            reply_markup=main_keyboard(),
+        )
         return
 
     if mode == Mode.GOALS:

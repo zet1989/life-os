@@ -20,6 +20,7 @@ class Mode(str, Enum):
     SET_PROMPT = "set_prompt"  # ожидаем текст промпта для выбранного проекта
     TASKS = "tasks"
     ADD_TASK = "add_task"  # ожидаем текст новой задачи
+    FOCUS = "focus"  # фокус дня
 
 
 # user_id → текущий режим
@@ -48,10 +49,11 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="📋 Задачи")],
-            [KeyboardButton(text="🎯 Цели и Мечты"), KeyboardButton(text="⚙️ Проекты")],
-            [KeyboardButton(text="📊 Сводный отчёт"), KeyboardButton(text="💰 Финансовая панорама")],
-            [KeyboardButton(text="🤖 AI Панель"), KeyboardButton(text="📋 Промпты")],
-            [KeyboardButton(text="➕ Цель"), KeyboardButton(text="📊 Графики"), KeyboardButton(text="ℹ️ Статус")],
+            [KeyboardButton(text="🎯 Фокус дня"), KeyboardButton(text="🎯 Цели и Мечты")],
+            [KeyboardButton(text="⚙️ Проекты"), KeyboardButton(text="📊 Сводный отчёт")],
+            [KeyboardButton(text="💰 Финансовая панорама"), KeyboardButton(text="🤖 AI Панель")],
+            [KeyboardButton(text="📋 Промпты"), KeyboardButton(text="➕ Цель")],
+            [KeyboardButton(text="📊 Графики"), KeyboardButton(text="ℹ️ Статус")],
         ],
         resize_keyboard=True,
     )

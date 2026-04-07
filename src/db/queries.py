@@ -151,6 +151,29 @@ async def get_today_water(user_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_weight_history(user_id: int, limit: int = 30) -> list[dict]:
+    """Последние записи веса/замеров за N записей."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM events
+           WHERE user_id = $1 AND event_type = 'weight' AND bot_source = 'health'
+           ORDER BY timestamp DESC LIMIT $2""",
+        user_id, limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_gratitude_today(user_id: int) -> list[dict]:
+    """Записи благодарностей за сегодня."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM events
+           WHERE user_id = $1 AND event_type = 'gratitude' AND bot_source = 'psychology'
+             AND timestamp >= (NOW() AT TIME ZONE 'Europe/Moscow')::date
+           ORDER BY timestamp ASC""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_cross_bot_summary(user_id: int, days: int = 7) -> list[dict]:
     """Последние события по ВСЕМ ботам за N дней (для кросс-бот контекста)."""
     rows = await get_pool().fetch(
@@ -273,6 +296,21 @@ async def get_finances_for_export(user_id: int) -> list[dict]:
            WHERE f.user_id = $1
            ORDER BY f.timestamp DESC""",
         user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_month_finance_by_category(project_id: int, year: int, month: int) -> list[dict]:
+    """Расходы/доходы за конкретный месяц по категориям (для бюджета план/факт)."""
+    rows = await get_pool().fetch(
+        """SELECT transaction_type, category, SUM(amount)::numeric(12,2) AS total
+           FROM finances
+           WHERE project_id = $1
+             AND EXTRACT(YEAR FROM timestamp) = $2
+             AND EXTRACT(MONTH FROM timestamp) = $3
+           GROUP BY transaction_type, category
+           ORDER BY transaction_type, total DESC""",
+        project_id, year, month,
     )
     return [dict(r) for r in rows]
 
@@ -769,6 +807,32 @@ async def get_week_summary(user_id: int) -> dict:
         "week_income": week_income,
         "week_expense": week_expense,
     }
+
+
+async def get_week_events_by_type(user_id: int) -> dict:
+    """Сводка событий за неделю по типам (для Weekly Notes)."""
+    pool = get_pool()
+    rows = await pool.fetch(
+        """SELECT event_type, COUNT(*) AS cnt
+           FROM events
+           WHERE user_id = $1
+             AND timestamp >= date_trunc('week', (NOW() AT TIME ZONE 'Europe/Moscow'))
+           GROUP BY event_type""",
+        user_id,
+    )
+    return {r["event_type"]: r["cnt"] for r in rows}
+
+
+async def get_today_focus(user_id: int) -> dict | None:
+    """Получить фокус дня (последний за сегодня)."""
+    row = await get_pool().fetchrow(
+        """SELECT * FROM events
+           WHERE user_id = $1 AND event_type = 'focus' AND bot_source = 'master'
+             AND timestamp >= (NOW() AT TIME ZONE 'Europe/Moscow')::date
+           ORDER BY timestamp DESC LIMIT 1""",
+        user_id,
+    )
+    return dict(row) if row else None
 
 
 async def complete_task(task_id: int, user_id: int) -> bool:

@@ -24,6 +24,7 @@ from src.db.queries import (
     delete_finance,
     get_finance_summary,
     get_finances_for_export,
+    get_month_finance_by_category,
     get_projects_by_type,
     get_recent_finances,
 )
@@ -242,6 +243,87 @@ async def cmd_export_csv(message: Message, db_user: dict) -> None:
     doc = FSInputFile(str(tmp), filename=f"finances_{user_id}.csv")
     await message.answer_document(doc, caption=f"📊 Экспорт финансов: {len(rows)} записей")
     tmp.unlink(missing_ok=True)
+
+
+# === /budget — план vs факт по бюджету ===
+
+@router.message(Command("budget"))
+async def cmd_budget(message: Message, db_user: dict) -> None:
+    """Бюджет на месяц: план vs факт по категориям."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    projects = await _ensure_family_project(user_id)
+    project = projects[0]
+    project_id = project["project_id"]
+
+    # Лимиты из metadata
+    from src.db.queries import get_project
+    proj = await get_project(project_id)
+    limits = (proj.get("metadata") or {}).get("limits", {})
+
+    # Факт за текущий месяц
+    facts = await get_month_finance_by_category(project_id, now.year, now.month)
+    expense_facts: dict[str, float] = {}
+    total_income = 0.0
+    total_expense = 0.0
+    for r in facts:
+        amount = float(r["total"])
+        if r["transaction_type"] == "expense":
+            expense_facts[r["category"]] = amount
+            total_expense += amount
+        else:
+            total_income += amount
+
+    month_names = [
+        "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+        "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+    ]
+    text = f"📋 <b>Бюджет: {month_names[now.month]} {now.year}</b>\n\n"
+
+    if limits:
+        text += "📊 <b>План vs Факт (расходы):</b>\n\n"
+        total_plan = sum(limits.values())
+        for cat, plan in sorted(limits.items(), key=lambda x: x[1], reverse=True):
+            fact = expense_facts.get(cat, 0)
+            pct = round(fact / plan * 100) if plan > 0 else 0
+            if pct >= 100:
+                bar_emoji = "🔴"
+            elif pct >= 80:
+                bar_emoji = "🟡"
+            else:
+                bar_emoji = "🟢"
+            filled = min(10, round(pct / 10))
+            bar = "▓" * filled + "░" * (10 - filled)
+            text += f"{bar_emoji} <b>{cat}</b>\n"
+            text += f"   {bar} {fact:,.0f} / {plan:,.0f} ₽ ({pct}%)\n"
+
+        text += f"\n📊 Итого план: <b>{total_plan:,.0f} ₽</b>\n"
+        text += f"💸 Итого факт: <b>{total_expense:,.0f} ₽</b>\n"
+        remaining = total_plan - total_expense
+        r_emoji = "✅" if remaining >= 0 else "🔴"
+        text += f"{r_emoji} Остаток: <b>{remaining:,.0f} ₽</b>\n"
+    else:
+        text += "⚠️ Лимиты бюджета не заданы.\n\n"
+        if expense_facts:
+            text += "<b>Факт расходов за месяц:</b>\n"
+            for cat, amt in sorted(expense_facts.items(), key=lambda x: x[1], reverse=True):
+                text += f"  💰 {cat}: <b>{amt:,.0f} ₽</b>\n"
+
+        text += (
+            "\n💡 Чтобы задать бюджет, обнови metadata проекта:\n"
+            '<code>{"limits": {"продукты": 40000, "транспорт": 15000}}</code>'
+        )
+
+    text += f"\n💵 Доход за месяц: <b>{total_income:,.0f} ₽</b>"
+    text += f"\n💰 Расход за месяц: <b>{total_expense:,.0f} ₽</b>"
+    balance = total_income - total_expense
+    b_emoji = "✅" if balance >= 0 else "🔴"
+    text += f"\n{b_emoji} Баланс: <b>{balance:,.0f} ₽</b>"
+
+    await message.answer(text, reply_markup=main_keyboard())
 
 
 # === Callback: выбор проекта ===

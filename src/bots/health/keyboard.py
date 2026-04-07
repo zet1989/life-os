@@ -14,6 +14,7 @@ class Mode(StrEnum):
     DOCTOR = "doctor"
     PROFILE = "profile"
     WATER = "water"
+    WEIGHT = "weight"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -21,8 +22,8 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🍽 Еда"), KeyboardButton(text="🏋️ Тренировка")],
-            [KeyboardButton(text="💧 Вода"), KeyboardButton(text="🩺 Доктор")],
-            [KeyboardButton(text="📋 Мой профиль")],
+            [KeyboardButton(text="💧 Вода"), KeyboardButton(text="⚖️ Вес")],
+            [KeyboardButton(text="🩺 Доктор"), KeyboardButton(text="📋 Мой профиль")],
         ],
         resize_keyboard=True,
     )
