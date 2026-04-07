@@ -63,8 +63,20 @@ async def rag_answer(
             ts = doc.get("timestamp", "")
             text = doc.get("raw_text", "")
             etype = doc.get("event_type", "")
-            chunks.append(f"[{ts}] ({etype}) {text}")
+            jd = doc.get("json_data") or {}
+            if etype == "obsidian_note":
+                src = jd.get("source_file", "")
+                chunks.append(f"[📝 Obsidian: {src}] {text}")
+            else:
+                chunks.append(f"[{ts}] ({etype}) {text}")
         context = "\n".join(chunks)
+
+    # Источники из Obsidian
+    obsidian_sources = [
+        (doc.get("json_data") or {}).get("source_file", "")
+        for doc in docs
+        if doc.get("event_type") == "obsidian_note"
+    ]
 
     # Augment + Generate
     messages = [
@@ -72,9 +84,17 @@ async def rag_answer(
         {"role": "user", "content": f"Контекст из базы знаний:\n{context}\n\nВопрос: {query}"},
     ]
 
-    return await chat(
+    answer = await chat(
         messages=messages,
         task_type="rag_answer",
         user_id=user_id,
         bot_source=bot_source,
     )
+
+    # Добавляем ссылки на Obsidian-источники
+    if obsidian_sources:
+        sources_text = "\n".join(f"📝 {s}" for s in obsidian_sources if s)
+        if sources_text:
+            answer += f"\n\n📂 Источники Obsidian:\n{sources_text}"
+
+    return answer

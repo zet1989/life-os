@@ -78,6 +78,27 @@ async def update_event_embedding(event_id: int, embedding: list[float]) -> None:
     )
 
 
+async def update_event_raw_text(event_id: int, raw_text: str) -> None:
+    """Обновить raw_text у существующего event."""
+    await get_pool().execute(
+        "UPDATE events SET raw_text = $1 WHERE id = $2",
+        raw_text, event_id,
+    )
+
+
+async def get_obsidian_note_event(user_id: int, source_file: str) -> dict | None:
+    """Найти event типа obsidian_note по source_file."""
+    row = await get_pool().fetchrow(
+        """SELECT * FROM events
+           WHERE user_id = $1
+             AND event_type = 'obsidian_note'
+             AND json_data->>'source_file' = $2
+           LIMIT 1""",
+        user_id, source_file,
+    )
+    return dict(row) if row else None
+
+
 async def get_recent_events(
     user_id: int,
     event_type: str,
