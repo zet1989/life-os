@@ -11,7 +11,7 @@ import structlog
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message, PhotoSize
+from aiogram.types import CallbackQuery, FSInputFile, Message, PhotoSize
 from src.utils.telegram import safe_answer, safe_edit
 
 from src.ai.router import chat
@@ -23,6 +23,7 @@ from src.db.queries import (
     create_project,
     delete_finance,
     get_finance_summary,
+    get_finances_for_export,
     get_projects_by_type,
     get_recent_finances,
 )
@@ -201,6 +202,46 @@ async def cmd_delete_transaction(message: Message, db_user: dict) -> None:
         await message.answer(f"✅ Транзакция #{finance_id} удалена.", reply_markup=main_keyboard())
     else:
         await message.answer(f"❌ Транзакция #{finance_id} не найдена или нет доступа.", reply_markup=main_keyboard())
+
+
+# === /export_csv — экспорт финансов в CSV ===
+
+@router.message(Command("export_csv"))
+async def cmd_export_csv(message: Message, db_user: dict) -> None:
+    """Скачать все финансовые записи в CSV."""
+    import csv
+    import tempfile
+    from pathlib import Path
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    rows = await get_finances_for_export(user_id)
+
+    if not rows:
+        await message.answer("Нет финансовых записей для экспорта.", reply_markup=main_keyboard())
+        return
+
+    # Генерируем CSV
+    tmp = Path(tempfile.mktemp(suffix=".csv"))
+    with open(tmp, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow(["ID", "Дата", "Тип", "Сумма", "Категория", "Описание", "Проект"])
+        for r in rows:
+            ts = r["timestamp"]
+            date_str = ts.strftime("%d.%m.%Y %H:%M") if hasattr(ts, "strftime") else str(ts)
+            tx_type = "Доход" if r["transaction_type"] == "income" else "Расход"
+            writer.writerow([
+                r["id"],
+                date_str,
+                tx_type,
+                f"{float(r['amount']):.2f}",
+                r.get("category", ""),
+                r.get("description", ""),
+                r.get("project_name", ""),
+            ])
+
+    doc = FSInputFile(str(tmp), filename=f"finances_{user_id}.csv")
+    await message.answer_document(doc, caption=f"📊 Экспорт финансов: {len(rows)} записей")
+    tmp.unlink(missing_ok=True)
 
 
 # === Callback: выбор проекта ===

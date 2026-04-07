@@ -6,6 +6,7 @@
 Управление промптами и моделями.
 """
 
+import calendar as cal_module
 import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -39,6 +40,7 @@ from src.db.queries import (
     get_overdue_tasks,
     get_project,
     get_task_by_id,
+    get_tasks_by_date,
     get_today_tasks,
     get_user_projects,
     get_week_tasks,
@@ -253,6 +255,57 @@ def _progress_bar(pct: int, length: int = 10) -> str:
     return "▓" * filled + "░" * (length - filled)
 
 
+# === Inline-календарь ===
+
+_DAY_ABBR = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+_MONTH_NAMES = [
+    "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+]
+
+
+def _build_calendar_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
+    """Построить inline-клавиатуру-календарь для выбора даты."""
+    rows: list[list[InlineKeyboardButton]] = []
+
+    # Заголовок с навигацией
+    prev_m = month - 1 if month > 1 else 12
+    prev_y = year if month > 1 else year - 1
+    next_m = month + 1 if month < 12 else 1
+    next_y = year if month < 12 else year + 1
+
+    rows.append([
+        InlineKeyboardButton(text="◀", callback_data=f"cal:{prev_y}:{prev_m}"),
+        InlineKeyboardButton(text=f"{_MONTH_NAMES[month]} {year}", callback_data="cal:noop"),
+        InlineKeyboardButton(text="▶", callback_data=f"cal:{next_y}:{next_m}"),
+    ])
+
+    # Дни недели
+    rows.append([InlineKeyboardButton(text=d, callback_data="cal:noop") for d in _DAY_ABBR])
+
+    # Дни месяца
+    cal = cal_module.monthcalendar(year, month)
+    today = datetime.now(MSK).date()
+    for week in cal:
+        row = []
+        for day in week:
+            if day == 0:
+                row.append(InlineKeyboardButton(text=" ", callback_data="cal:noop"))
+            else:
+                d = datetime(year, month, day).date()
+                label = f"·{day}·" if d == today else str(day)
+                row.append(InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"cal_day:{d.isoformat()}",
+                ))
+        rows.append(row)
+
+    # Кнопка «Назад к задачам»
+    rows.append([InlineKeyboardButton(text="📋 Задачи на сегодня", callback_data="cal:back")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 # === Кнопки быстрого доступа ===
 
 @router.message(F.text == "➕ Цель")
@@ -308,6 +361,7 @@ def _tasks_inline_keyboard(tasks: list[dict]) -> InlineKeyboardMarkup:
     buttons.append([
         InlineKeyboardButton(text="➕ Добавить", callback_data="task_add"),
         InlineKeyboardButton(text="🔄 Просрочено", callback_data="task_overdue"),
+        InlineKeyboardButton(text="📅 Другой день", callback_data="cal:open"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -438,8 +492,91 @@ async def cb_task_overdue(callback: CallbackQuery) -> None:
             ),
         ])
 
+    # Кнопка «Все→завтра» одним нажатием
+    if len(overdue) > 1:
+        buttons.append([InlineKeyboardButton(
+            text="🔄 Все→завтра",
+            callback_data="task_reschedule_all_overdue",
+        )])
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.answer(text, reply_markup=keyboard)  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data == "task_reschedule_all_overdue")
+async def cb_reschedule_all_overdue(callback: CallbackQuery) -> None:
+    """Перенести ВСЕ просроченные задачи на завтра."""
+    user_id = callback.from_user.id
+    overdue = await get_overdue_tasks(user_id)
+    tomorrow = (datetime.now(MSK) + timedelta(days=1)).strftime("%Y-%m-%d")
+    count = 0
+    for t in overdue:
+        await reschedule_task(t["id"], user_id, tomorrow)
+        count += 1
+    await callback.answer(f"📅 Перенесено: {count} задач")
+    await _show_today_tasks(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+# --- Inline-календарь callbacks ---
+
+@router.callback_query(F.data == "cal:open")
+async def cb_calendar_open(callback: CallbackQuery) -> None:
+    """Открыть inline-календарь на текущий месяц."""
+    now = datetime.now(MSK)
+    keyboard = _build_calendar_keyboard(now.year, now.month)
+    await callback.answer()
+    await safe_edit(callback.message, "📅 Выбери дату:", reply_markup=keyboard)
+
+
+@router.callback_query(F.data == "cal:noop")
+async def cb_calendar_noop(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cal:back")
+async def cb_calendar_back(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    await callback.answer()
+    await _show_today_tasks(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+@router.callback_query(F.data.regexp(r"^cal:\d{4}:\d{1,2}$"))
+async def cb_calendar_navigate(callback: CallbackQuery) -> None:
+    """Навигация по месяцам в inline-календаре."""
+    parts = callback.data.split(":")  # type: ignore[union-attr]
+    year, month = int(parts[1]), int(parts[2])
+    keyboard = _build_calendar_keyboard(year, month)
+    await callback.answer()
+    await safe_edit(callback.message, "📅 Выбери дату:", reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("cal_day:"))
+async def cb_calendar_day(callback: CallbackQuery) -> None:
+    """Показать задачи на выбранную дату."""
+    user_id = callback.from_user.id
+    date_str = callback.data.split(":", 1)[1]  # type: ignore[union-attr]
+    tasks = await get_tasks_by_date(user_id, date_str)
+
+    display = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+    text = f"📅 <b>Задачи на {display}</b>\n\n"
+
+    if not tasks:
+        text += "Задач нет."
+    else:
+        done_count = sum(1 for t in tasks if t["is_done"])
+        text += f"Выполнено: {done_count}/{len(tasks)}\n\n"
+        for t in tasks:
+            text += _format_task_line(t) + "\n"
+
+    # Кнопки: назад к календарю и к задачам
+    d = datetime.strptime(date_str, "%Y-%m-%d")
+    buttons = [
+        [InlineKeyboardButton(text="◀ Календарь", callback_data=f"cal:{d.year}:{d.month}")],
+        [InlineKeyboardButton(text="📋 Задачи на сегодня", callback_data="cal:back")],
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await callback.answer()
+    await safe_edit(callback.message, text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data.startswith("task_reschedule:"))
@@ -527,6 +664,60 @@ async def cmd_done(message: Message, db_user: dict) -> None:
         await message.answer("✅ Задача выполнена!", reply_markup=main_keyboard())
     else:
         await message.answer("Задача не найдена или нет доступа.")
+
+
+# === /weekly — еженедельный обзор (GTD-стиль) ===
+
+@router.message(Command("weekly"))
+async def cmd_weekly(message: Message, db_user: dict) -> None:
+    """Еженедельный обзор: задачи, цели, финансы за неделю."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    processing = await message.answer("⏳ Формирую еженедельный обзор...")
+
+    from src.db.queries import get_week_summary
+
+    summary = await get_week_summary(user_id)
+    goals = await get_active_goals(user_id)
+    overdue = await get_overdue_tasks(user_id)
+
+    text = "📋 <b>ЕЖЕНЕДЕЛЬНЫЙ ОБЗОР (GTD)</b>\n\n"
+
+    # Задачи за неделю
+    text += f"✅ Выполнено за неделю: <b>{summary['completed']}</b>\n"
+    text += f"➕ Создано за неделю: <b>{summary['created']}</b>\n"
+    if overdue:
+        text += f"🔴 Просрочено: <b>{len(overdue)}</b>\n"
+    text += "\n"
+
+    # Цели
+    if goals:
+        text += "🎯 <b>Прогресс по целям:</b>\n"
+        for g in goals:
+            pct = g.get("progress_pct", 0)
+            bar = _progress_bar(pct, 8)
+            emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(g["type"], "📌")
+            text += f"  {emoji} {g['title']} {bar} {pct}%\n"
+        text += "\n"
+
+    # Финансы за неделю
+    text += f"💰 <b>Финансы за неделю:</b>\n"
+    text += f"  💵 Доход: <b>{summary['week_income']:,.0f} ₽</b>\n"
+    text += f"  💸 Расход: <b>{summary['week_expense']:,.0f} ₽</b>\n"
+    balance = summary["week_income"] - summary["week_expense"]
+    b_emoji = "✅" if balance >= 0 else "🔴"
+    text += f"  {b_emoji} Баланс: <b>{balance:,.0f} ₽</b>\n\n"
+
+    # Просроченные задачи
+    if overdue:
+        text += "🔴 <b>Требуют решения:</b>\n"
+        for t in overdue[:5]:
+            d = t["due_date"].strftime("%d.%m") if t.get("due_date") else ""
+            text += f"  ⚠️ [{d}] {t['task_text']}\n"
+        text += "\n"
+
+    text += "💡 <i>Советы: пересмотри просроченные, спланируй следующую неделю, обнови прогресс целей.</i>"
+
+    await processing.edit_text(text)
 
 
 # === /repeat — создать повторяющуюся задачу ===

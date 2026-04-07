@@ -139,6 +139,18 @@ async def get_today_workouts(user_id: int, bot_source: str = "health") -> list[d
     return [dict(r) for r in rows]
 
 
+async def get_today_water(user_id: int) -> list[dict]:
+    """Записи воды за сегодня (по MSK-дню)."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM events
+           WHERE user_id = $1 AND event_type = 'water' AND bot_source = 'health'
+             AND timestamp >= (NOW() AT TIME ZONE 'Europe/Moscow')::date
+           ORDER BY timestamp ASC""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_cross_bot_summary(user_id: int, days: int = 7) -> list[dict]:
     """Последние события по ВСЕМ ботам за N дней (для кросс-бот контекста)."""
     rows = await get_pool().fetch(
@@ -247,6 +259,20 @@ async def get_finance_summary(project_id: int) -> list[dict]:
            GROUP BY transaction_type, category
            ORDER BY transaction_type, total DESC""",
         project_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_finances_for_export(user_id: int) -> list[dict]:
+    """Все транзакции пользователя для CSV-экспорта."""
+    rows = await get_pool().fetch(
+        """SELECT f.id, f.transaction_type, f.amount, f.category, f.description,
+                  f.timestamp, p.name AS project_name
+           FROM finances f
+           LEFT JOIN projects p ON f.project_id = p.project_id
+           WHERE f.user_id = $1
+           ORDER BY f.timestamp DESC""",
+        user_id,
     )
     return [dict(r) for r in rows]
 
@@ -698,6 +724,51 @@ async def get_week_tasks(user_id: int) -> list[dict]:
         user_id,
     )
     return [dict(r) for r in rows]
+
+
+async def get_week_summary(user_id: int) -> dict:
+    """Сводка за текущую неделю: выполнено/создано задач, финансы."""
+    pool = get_pool()
+
+    # Задачи: выполнено за неделю
+    completed = await pool.fetchval(
+        """SELECT COUNT(*) FROM tasks
+           WHERE user_id = $1 AND is_done = TRUE
+             AND done_at >= date_trunc('week', (NOW() AT TIME ZONE 'Europe/Moscow'))""",
+        user_id,
+    ) or 0
+
+    # Задачи: создано за неделю
+    created = await pool.fetchval(
+        """SELECT COUNT(*) FROM tasks
+           WHERE user_id = $1
+             AND created_at >= date_trunc('week', (NOW() AT TIME ZONE 'Europe/Moscow'))""",
+        user_id,
+    ) or 0
+
+    # Финансы за неделю
+    fin_rows = await pool.fetch(
+        """SELECT transaction_type, COALESCE(SUM(amount), 0)::numeric(12,2) AS total
+           FROM finances
+           WHERE user_id = $1
+             AND timestamp >= date_trunc('week', (NOW() AT TIME ZONE 'Europe/Moscow'))
+           GROUP BY transaction_type""",
+        user_id,
+    )
+    week_income = 0.0
+    week_expense = 0.0
+    for r in fin_rows:
+        if r["transaction_type"] == "income":
+            week_income = float(r["total"])
+        else:
+            week_expense = float(r["total"])
+
+    return {
+        "completed": completed,
+        "created": created,
+        "week_income": week_income,
+        "week_expense": week_expense,
+    }
 
 
 async def complete_task(task_id: int, user_id: int) -> bool:

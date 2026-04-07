@@ -34,6 +34,7 @@ from src.db.queries import (
     get_today_tasks,
     get_unclosed_tasks,
     get_user_projects,
+    get_week_summary,
     mark_obsidian_reminder_sent,
     mark_reminder_sent,
     spawn_recurring_task,
@@ -188,6 +189,15 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         spawn_recurring_tasks,
         trigger=CronTrigger(hour=6, minute=0),
         id="recurring_tasks",
+        replace_existing=True,
+    )
+
+    # Еженедельный обзор — воскресенье 20:00
+    scheduler.add_job(
+        send_weekly_review,
+        trigger=CronTrigger(day_of_week="sun", hour=20, minute=0),
+        args=[bot],
+        id="weekly_review",
         replace_existing=True,
     )
 
@@ -426,3 +436,62 @@ async def send_obsidian_reminders(bot: Bot) -> None:
                 logger.exception("obsidian_reminder_failed", task_id=task["id"])
     except Exception:
         logger.exception("obsidian_reminders_failed")
+
+
+# === Еженедельный обзор ===
+
+async def send_weekly_review(bot: Bot) -> None:
+    """Еженедельный обзор для admin-пользователей (воскресенье 20:00)."""
+    try:
+        admins = await get_admin_users()
+        for admin in admins:
+            await _send_weekly_to_user(bot, admin["user_id"])
+    except Exception:
+        logger.exception("weekly_review_failed")
+
+
+async def _send_weekly_to_user(bot: Bot, user_id: int) -> None:
+    """Еженедельный GTD-обзор для одного пользователя."""
+    try:
+        summary = await get_week_summary(user_id)
+        goals = await get_active_goals(user_id)
+        overdue = await get_overdue_tasks(user_id)
+
+        text = "📋 <b>ЕЖЕНЕДЕЛЬНЫЙ ОБЗОР</b>\n\n"
+
+        text += f"✅ Выполнено: <b>{summary['completed']}</b>\n"
+        text += f"➕ Создано: <b>{summary['created']}</b>\n"
+        if overdue:
+            text += f"🔴 Просрочено: <b>{len(overdue)}</b>\n"
+        text += "\n"
+
+        if goals:
+            text += "🎯 <b>Цели:</b>\n"
+            for g in goals:
+                pct = g.get("progress_pct", 0)
+                filled = round(pct / 100 * 8)
+                bar = "▓" * filled + "░" * (8 - filled)
+                emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(g["type"], "📌")
+                text += f"  {emoji} {g['title']} {bar} {pct}%\n"
+            text += "\n"
+
+        text += f"💰 <b>Финансы за неделю:</b>\n"
+        text += f"  💵 Доход: <b>{summary['week_income']:,.0f} ₽</b>\n"
+        text += f"  💸 Расход: <b>{summary['week_expense']:,.0f} ₽</b>\n"
+        balance = summary["week_income"] - summary["week_expense"]
+        b_emoji = "✅" if balance >= 0 else "🔴"
+        text += f"  {b_emoji} Баланс: <b>{balance:,.0f} ₽</b>\n\n"
+
+        if overdue:
+            text += "⚠️ <b>Просроченные:</b>\n"
+            for t in overdue[:5]:
+                d = t["due_date"].strftime("%d.%m") if t.get("due_date") else ""
+                text += f"  [{d}] {t['task_text']}\n"
+            text += "\n"
+
+        text += "💡 <i>Спланируй следующую неделю, обнови прогресс целей.</i>"
+
+        await bot.send_message(user_id, text)
+
+    except Exception:
+        logger.exception("weekly_user_failed", user_id=user_id)

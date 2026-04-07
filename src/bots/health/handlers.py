@@ -8,14 +8,14 @@ from zoneinfo import ZoneInfo
 import structlog
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from src.ai.router import chat
 from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
-from src.utils.telegram import safe_answer
-from src.db.queries import create_event, get_today_meals, get_today_workouts, get_user, update_user_settings
+from src.utils.telegram import safe_answer, safe_edit
+from src.db.queries import create_event, get_today_meals, get_today_water, get_today_workouts, get_user, update_user_settings
 from src.bots.health.prompts import (
     DOCTOR_PHOTO_PROMPT,
     DOCTOR_SYSTEM,
@@ -163,6 +163,92 @@ async def mode_doctor(message: Message) -> None:
     )
 
 
+# === 💧 Вода ===
+
+WATER_GOAL_ML = 2500  # Дневная цель (мл)
+
+WATER_QUICK_BUTTONS = InlineKeyboardMarkup(inline_keyboard=[
+    [
+        InlineKeyboardButton(text="🥤 200 мл", callback_data="water:200"),
+        InlineKeyboardButton(text="🥤 250 мл", callback_data="water:250"),
+        InlineKeyboardButton(text="🥤 300 мл", callback_data="water:300"),
+    ],
+    [
+        InlineKeyboardButton(text="🫗 500 мл", callback_data="water:500"),
+        InlineKeyboardButton(text="🍶 750 мл", callback_data="water:750"),
+        InlineKeyboardButton(text="💧 Другое", callback_data="water:custom"),
+    ],
+])
+
+
+@router.message(F.text == "💧 Вода")
+async def mode_water(message: Message) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.WATER)
+    water_text = await _water_status(user_id)
+    await message.answer(
+        f"💧 <b>Водный баланс</b>\n\n{water_text}\n\n"
+        "Выбери количество или напиши в мл:",
+        reply_markup=main_keyboard(),
+    )
+    await message.answer("Быстрое добавление:", reply_markup=WATER_QUICK_BUTTONS)
+
+
+@router.callback_query(F.data.startswith("water:"))
+async def cb_water(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    value = callback.data.split(":")[1]  # type: ignore[union-attr]
+
+    if value == "custom":
+        set_user_mode(user_id, Mode.WATER)
+        await callback.answer()
+        await callback.message.answer(  # type: ignore[union-attr]
+            "Напиши количество воды в мл (например: 350):",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    ml = int(value)
+    await _add_water(user_id, ml)
+    water_text = await _water_status(user_id)
+    await callback.answer(f"💧 +{ml} мл")
+    await safe_edit(callback.message, f"💧 <b>Водный баланс</b>\n\n{water_text}", reply_markup=WATER_QUICK_BUTTONS)
+
+
+async def _add_water(user_id: int, ml: int) -> None:
+    """Добавить запись о выпитой воде."""
+    await create_event(
+        user_id=user_id,
+        event_type="water",
+        bot_source="health",
+        raw_text=f"{ml} мл воды",
+        json_data={"ml": ml},
+    )
+
+
+async def _water_status(user_id: int) -> str:
+    """Текущий статус водного баланса за день."""
+    records = await get_today_water(user_id)
+    total_ml = sum((r.get("json_data") or {}).get("ml", 0) for r in records)
+    pct = min(100, round(total_ml / WATER_GOAL_ML * 100))
+    filled = round(pct / 100 * 10)
+    bar = "💧" * filled + "⬜" * (10 - filled)
+
+    text = f"{bar} {total_ml} / {WATER_GOAL_ML} мл ({pct}%)"
+    if pct >= 100:
+        text += "\n🎉 Дневная норма выполнена!"
+    elif pct >= 70:
+        text += "\n👍 Почти у цели!"
+
+    if records:
+        last = records[-1]
+        ts = last.get("timestamp")
+        if hasattr(ts, "strftime"):
+            text += f"\n⏰ Последний приём: {ts.strftime('%H:%M')}"
+
+    return text
+
+
 # === /settings (backward compat) ===
 
 @router.message(Command("settings"))
@@ -240,6 +326,8 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
         await _process_doctor(message, user_id, text)
     elif mode == Mode.PROFILE:
         await _process_profile(message, user_id, text)
+    elif mode == Mode.WATER:
+        await _process_water_text(message, user_id, text)
     else:
         await _process_food_text(message, user_id, text)
 
@@ -258,11 +346,37 @@ async def handle_text(message: Message, db_user: dict) -> None:
         await _process_doctor(message, user_id, text)
     elif mode == Mode.PROFILE:
         await _process_profile(message, user_id, text)
+    elif mode == Mode.WATER:
+        await _process_water_text(message, user_id, text)
     else:
         await _process_food_text(message, user_id, text)
 
 
 # === Внутренние обработчики ===
+
+async def _process_water_text(message: Message, user_id: int, text: str) -> None:
+    """Обработка текстового ввода воды (в мл)."""
+    # Извлекаем число из текста
+    import re
+    match = re.search(r"(\d+)", text)
+    if not match:
+        await message.answer(
+            "Напиши количество воды в мл (числом), например: 300",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    ml = int(match.group(1))
+    if ml <= 0 or ml > 5000:
+        await message.answer("Введи разумное количество (1-5000 мл).", reply_markup=main_keyboard())
+        return
+
+    await _add_water(user_id, ml)
+    water_text = await _water_status(user_id)
+    await message.answer(
+        f"💧 +{ml} мл\n\n{water_text}",
+        reply_markup=main_keyboard(),
+    )
 
 async def _process_food_text(message: Message, user_id: int, text: str) -> None:
     """Обработка текстового описания еды — STATELESS."""
