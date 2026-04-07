@@ -502,55 +502,63 @@ async def cmd_done(message: Message, db_user: dict) -> None:
 async def _parse_and_create_task(message: Message, user_id: int, text: str) -> None:
     """Парсинг текста задачи через LLM и создание."""
     today = datetime.now(MSK).strftime("%Y-%m-%d")
-    prompt = TASK_PARSE_PROMPT.format(text=text, today=today)
 
-    result = await chat(
-        messages=[
-            {"role": "system", "content": MASTER_SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-        task_type="master_goal",
-        user_id=user_id,
-        bot_source=BOT_SOURCE,
-    )
+    try:
+        prompt = TASK_PARSE_PROMPT.format(text=text, today=today)
+        result = await chat(
+            messages=[
+                {"role": "system", "content": MASTER_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            task_type="master_goal",
+            user_id=user_id,
+            bot_source=BOT_SOURCE,
+        )
+        parsed = _extract_json(result)
+    except Exception as exc:
+        logger.error("task_parse_llm_error", error=str(exc))
+        parsed = None
 
-    parsed = _extract_json(result)
-    if not parsed or "task_text" not in parsed:
-        # Fallback: создать задачу как есть на сегодня
+    try:
+        if not parsed or "task_text" not in parsed:
+            # Fallback: создать задачу как есть на сегодня
+            task = await create_task(
+                user_id=user_id,
+                task_text=text[:200],
+                due_date=today,
+            )
+            await message.answer(
+                f"📋 Задача добавлена: <b>{text[:200]}</b>\n📅 Сегодня",
+                reply_markup=main_keyboard(),
+            )
+            return
+
+        due_date = parsed.get("due_date") or today
+        due_time = parsed.get("due_time")
+        priority = parsed.get("priority", "normal")
+        task_text = parsed["task_text"]
+
         task = await create_task(
             user_id=user_id,
-            task_text=text[:200],
-            due_date=today,
+            task_text=task_text,
+            due_date=due_date,
+            due_time=due_time,
+            priority=priority,
         )
+
+        prio_emoji = PRIORITY_EMOJI.get(priority, "")
+        time_str = f" ⏰ {due_time}" if due_time else ""
+        date_display = datetime.strptime(due_date, "%Y-%m-%d").strftime("%d.%m.%Y")
+
         await message.answer(
-            f"📋 Задача добавлена: <b>{text[:200]}</b>\n📅 Сегодня",
+            f"📋 Задача добавлена: <b>{task_text}</b>\n"
+            f"📅 {date_display}{time_str} {prio_emoji}",
             reply_markup=main_keyboard(),
         )
-        return
-
-    due_date = parsed.get("due_date") or today
-    due_time = parsed.get("due_time")
-    priority = parsed.get("priority", "normal")
-    task_text = parsed["task_text"]
-
-    task = await create_task(
-        user_id=user_id,
-        task_text=task_text,
-        due_date=due_date,
-        due_time=due_time,
-        priority=priority,
-    )
-
-    prio_emoji = PRIORITY_EMOJI.get(priority, "")
-    time_str = f" ⏰ {due_time}" if due_time else ""
-    date_display = datetime.strptime(due_date, "%Y-%m-%d").strftime("%d.%m.%Y")
-
-    await message.answer(
-        f"📋 Задача добавлена: <b>{task_text}</b>\n"
-        f"📅 {date_display}{time_str} {prio_emoji}",
-        reply_markup=main_keyboard(),
-    )
-    set_user_mode(user_id, Mode.TASKS)
+        set_user_mode(user_id, Mode.TASKS)
+    except Exception as exc:
+        logger.error("task_create_error", error=str(exc), user_id=user_id)
+        await safe_answer(message, f"❌ Ошибка создания задачи: {exc}")
 
 
 # === AI Панель — модели, бесплатные лимиты, маршрутизация ===
