@@ -4,7 +4,7 @@
 Финансы считаются ТОЛЬКО через SQL, НИКОГДА через LLM.
 """
 
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime, time as time_type, timezone
 from typing import Any
 
 import numpy as np
@@ -542,11 +542,30 @@ async def get_expense_data(user_id: int, project_id: int | None = None) -> list[
 
 # === Tasks (Планировщик) ===
 
+def _parse_date(val: str | date_type | None) -> date_type | None:
+    """Конвертировать строку YYYY-MM-DD в datetime.date для asyncpg."""
+    if val is None:
+        return None
+    if isinstance(val, date_type):
+        return val
+    return date_type.fromisoformat(str(val)[:10])
+
+
+def _parse_time(val: str | time_type | None) -> time_type | None:
+    """Конвертировать строку HH:MM в datetime.time для asyncpg."""
+    if val is None:
+        return None
+    if isinstance(val, time_type):
+        return val
+    parts = str(val).split(":")
+    return time_type(int(parts[0]), int(parts[1]))
+
+
 async def create_task(
     user_id: int,
     task_text: str,
-    due_date: str | None = None,
-    due_time: str | None = None,
+    due_date: str | date_type | None = None,
+    due_time: str | time_type | None = None,
     priority: str = "normal",
     project_id: int | None = None,
     source: str = "telegram",
@@ -556,8 +575,8 @@ async def create_task(
     row = await get_pool().fetchrow(
         """INSERT INTO tasks (user_id, task_text, due_date, due_time, priority,
                               project_id, source, source_file)
-           VALUES ($1, $2, $3::date, $4::time, $5, $6, $7, $8) RETURNING *""",
-        user_id, task_text, due_date, due_time, priority,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *""",
+        user_id, task_text, _parse_date(due_date), _parse_time(due_time), priority,
         project_id, source, source_file,
     )
     return dict(row)
@@ -569,9 +588,9 @@ async def get_tasks_by_date(user_id: int, date: str) -> list[dict]:
         """SELECT t.*, p.name AS project_name
            FROM tasks t
            LEFT JOIN projects p ON t.project_id = p.project_id
-           WHERE t.user_id = $1 AND t.due_date = $2::date
+           WHERE t.user_id = $1 AND t.due_date = $2
            ORDER BY t.is_done ASC, t.due_time ASC NULLS LAST, t.priority DESC""",
-        user_id, date,
+        user_id, _parse_date(date),
     )
     return [dict(r) for r in rows]
 
@@ -643,9 +662,9 @@ async def uncomplete_task(task_id: int, user_id: int) -> bool:
 async def reschedule_task(task_id: int, user_id: int, new_date: str) -> bool:
     """Перенести задачу на другую дату."""
     result = await get_pool().execute(
-        """UPDATE tasks SET due_date = $3::date, reminder_sent = FALSE, updated_at = NOW()
+        """UPDATE tasks SET due_date = $3, reminder_sent = FALSE, updated_at = NOW()
            WHERE id = $1 AND user_id = $2""",
-        task_id, user_id, new_date,
+        task_id, user_id, _parse_date(new_date),
     )
     return result != "UPDATE 0"
 
