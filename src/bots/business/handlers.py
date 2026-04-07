@@ -36,6 +36,7 @@ from src.bots.business.prompts import (
     TASK_PROMPT,
     build_business_system,
 )
+from src.integrations.obsidian.writer import obsidian
 
 logger = structlog.get_logger()
 router = Router()
@@ -232,6 +233,7 @@ async def _attach_to_project(callback: CallbackQuery, user_id: int, project_id: 
 
     # RAG embedding
     await store_event_embedding(event["id"], text, user_id=user_id, bot_source=BOT_SOURCE)
+    await obsidian.log_idea(text, source="business")
 
     await callback.answer("✅ Сохранено")
     if callback.message:
@@ -389,6 +391,7 @@ async def _attach_to_project_direct(
     )
 
     await store_event_embedding(event["id"], text, user_id=user_id, bot_source=BOT_SOURCE)
+    await obsidian.log_idea(text, source="business")
     await safe_answer(message, result, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 

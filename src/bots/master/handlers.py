@@ -63,6 +63,7 @@ from src.bots.master.prompts import (
     TASK_PARSE_PROMPT,
     VISION_CONTEXT,
 )
+from src.integrations.obsidian.writer import obsidian
 
 logger = structlog.get_logger()
 router = Router()
@@ -545,6 +546,7 @@ async def _parse_and_create_task(message: Message, user_id: int, text: str) -> N
             due_time=due_time,
             priority=priority,
         )
+        await obsidian.log_task_to_daily(task_text, due_time or "", priority)
 
         prio_emoji = PRIORITY_EMOJI.get(priority, "")
         time_str = f" ⏰ {due_time}" if due_time else ""

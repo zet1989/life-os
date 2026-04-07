@@ -35,6 +35,7 @@ from src.bots.psychology.prompts import (
     PSYCHOLOGY_SYSTEM,
     RETROSPECTIVE_PROMPT,
 )
+from src.integrations.obsidian.writer import obsidian
 
 logger = structlog.get_logger()
 router = Router()
@@ -423,6 +424,7 @@ async def _process_diary(message: Message, user_id: int, text: str) -> None:
 
     # RAG embedding для долгосрочной рефлексии
     await store_event_embedding(event["id"], text, user_id, BOT_SOURCE)
+    await obsidian.log_diary(text)
 
     # Обратная связь от психолога
     system = await _psychology_system(user_id)

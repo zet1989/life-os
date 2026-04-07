@@ -20,11 +20,13 @@ from src.db.queries import (
     get_admin_users,
     get_completed_today_count,
     get_finance_summary,
+    get_obsidian_pending_reminders,
     get_overdue_tasks,
     get_pending_task_reminders,
     get_today_tasks,
     get_unclosed_tasks,
     get_user_projects,
+    mark_obsidian_reminder_sent,
     mark_reminder_sent,
 )
 from src.bots.master.prompts import AUDIT_PROMPT, EVENING_REVIEW_HEADER, MASTER_SYSTEM, VISION_CONTEXT
@@ -152,6 +154,15 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=IntervalTrigger(minutes=1),
         args=[bot],
         id="task_reminders",
+        replace_existing=True,
+    )
+
+    # Obsidian задачи — каждую минуту
+    scheduler.add_job(
+        send_obsidian_reminders,
+        trigger=IntervalTrigger(minutes=1),
+        args=[bot],
+        id="obsidian_reminders",
         replace_existing=True,
     )
 
@@ -299,3 +310,26 @@ async def send_task_reminders(bot: Bot) -> None:
                 logger.exception("reminder_send_failed", task_id=task["id"])
     except Exception:
         logger.exception("task_reminders_failed")
+
+
+# === Obsidian-задачи — напоминания ===
+
+async def send_obsidian_reminders(bot: Bot) -> None:
+    """Отправить напоминания о задачах из Obsidian."""
+    try:
+        pending = await get_obsidian_pending_reminders()
+        for task in pending:
+            try:
+                time_str = task["due_time"].strftime("%H:%M") if task.get("due_time") else ""
+                text = (
+                    f"⏰ <b>Obsidian-задача</b>\n\n"
+                    f"{task['task_text']}\n"
+                    f"🕐 {time_str}\n"
+                    f"📂 {task['source_file']}"
+                )
+                await bot.send_message(task["user_id"], text)
+                await mark_obsidian_reminder_sent(task["id"])
+            except Exception:
+                logger.exception("obsidian_reminder_failed", task_id=task["id"])
+    except Exception:
+        logger.exception("obsidian_reminders_failed")

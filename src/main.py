@@ -117,6 +117,11 @@ def _collect_bots() -> list[dict]:
 
 async def _main_polling() -> None:
     await init_pool()
+
+    # Obsidian watcher
+    from src.integrations.obsidian.watcher import start_watcher
+    await start_watcher(user_id=settings.admin_user_id)
+
     bots_cfg = _collect_bots()
     if not bots_cfg:
         logger.error("no_bots_configured")
@@ -145,6 +150,11 @@ async def _main_webhook() -> None:
     from aiohttp import web
 
     await init_pool()
+
+    # Obsidian watcher
+    from src.integrations.obsidian.watcher import start_watcher
+    await start_watcher(user_id=settings.admin_user_id)
+
     bots_cfg = _collect_bots()
     if not bots_cfg:
         logger.error("no_bots_configured")

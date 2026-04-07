@@ -24,6 +24,12 @@ jobs:
             cd /opt/life-os
             git pull origin main
 
+            # Enable Obsidian integration in .env
+            grep -q 'OBSIDIAN_SYNC_ENABLED' .env || echo 'OBSIDIAN_SYNC_ENABLED=true' >> .env
+            grep -q 'OBSIDIAN_WATCH_ENABLED' .env || echo 'OBSIDIAN_WATCH_ENABLED=true' >> .env
+            sed -i 's/OBSIDIAN_SYNC_ENABLED=false/OBSIDIAN_SYNC_ENABLED=true/' .env
+            sed -i 's/OBSIDIAN_WATCH_ENABLED=false/OBSIDIAN_WATCH_ENABLED=true/' .env
+
             # Fix Syncthing permissions
             docker compose stop syncthing 2>/dev/null || true
             docker run --rm -v life-os_syncthing_config:/config -v life-os_obsidian_vault:/data alpine sh -c 'chown -R 1000:1000 /config /data' 2>/dev/null || true
@@ -43,12 +49,6 @@ jobs:
               cat "$f" | docker compose exec -T postgres psql -U lifeos -d lifeos 2>&1 || true
             done
             echo '=== Syncthing status ==='
-            docker compose logs --tail=10 syncthing
-            echo '=== Syncthing Device ID ==='
-            docker compose exec -T syncthing syncthing -device-id 2>/dev/null || echo "syncthing cli not available"
-            echo '=== SSH authorized_keys ==='
-            cat ~/.ssh/authorized_keys
-            echo '=== iptables SSH ==='
-            iptables -L INPUT -n | head -20
+            docker compose logs --tail=5 syncthing
             echo '=== Bot logs ==='
             docker compose logs --tail=20 bot

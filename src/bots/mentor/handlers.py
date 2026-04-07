@@ -40,6 +40,7 @@ from src.bots.mentor.prompts import (
     REPORT_PROMPT,
     STRATEGY_PROMPT,
 )
+from src.integrations.obsidian.writer import obsidian
 
 logger = structlog.get_logger()
 router = Router()
@@ -211,6 +212,7 @@ async def _attach_idea_to_project(
         project_id=project_id,
     )
     await store_event_embedding(event["id"], text, user_id=user_id, bot_source=BOT_SOURCE)
+    await obsidian.log_idea(text, source="mentor")
 
     if callback.message:
         await callback.message.answer(result, reply_markup=main_keyboard())  # type: ignore[union-attr]

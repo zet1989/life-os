@@ -26,6 +26,7 @@ from src.bots.health.prompts import (
     WIFE_NUTRITIONIST_SYSTEM,
 )
 from src.bots.health.keyboard import main_keyboard, Mode, get_user_mode, set_user_mode
+from src.integrations.obsidian.writer import obsidian
 
 logger = structlog.get_logger()
 router = Router()
@@ -207,6 +208,7 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
             json_data=json_data,
             media_url=None,
         )
+        await obsidian.log_meal(json_data, "[фото еды]")
 
     display_text = _format_meal_response(result, json_data)
 
@@ -287,6 +289,7 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
             raw_text=text,
             json_data=json_data,
         )
+        await obsidian.log_meal(json_data, text)
 
     display_text = _format_meal_response(result, json_data, user_id)
     await safe_answer(message, display_text, reply_markup=main_keyboard())
@@ -312,6 +315,7 @@ async def _process_workout(message: Message, user_id: int, text: str) -> None:
             raw_text=text,
             json_data=json_data,
         )
+        await obsidian.log_workout(json_data, text)
 
     display_text = _format_workout_response(result, json_data)
     await safe_answer(message, display_text, reply_markup=main_keyboard())

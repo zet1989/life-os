@@ -724,3 +724,63 @@ async def get_completed_today_count(user_id: int) -> int:
         user_id,
     )
     return int(val)
+
+
+# === Obsidian Tasks ===
+
+async def upsert_obsidian_task(
+    user_id: int,
+    task_text: str,
+    source_file: str,
+    due_date: str | None = None,
+    due_time: str | None = None,
+    is_done: bool = False,
+) -> dict:
+    """Создать или обновить задачу из Obsidian (дедупликация по source_file + task_text)."""
+    dd = _parse_date(due_date) if due_date else None
+    dt = _parse_time(due_time) if due_time else None
+    row = await get_pool().fetchrow(
+        """INSERT INTO obsidian_tasks (user_id, task_text, source_file, due_date, due_time, is_done, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())
+           ON CONFLICT (source_file, task_text)
+           DO UPDATE SET due_date = EXCLUDED.due_date,
+                         due_time = EXCLUDED.due_time,
+                         is_done  = EXCLUDED.is_done,
+                         updated_at = NOW()
+           RETURNING *""",
+        user_id, task_text, source_file, dd, dt, is_done,
+    )
+    return dict(row)
+
+
+async def get_obsidian_pending_reminders() -> list[dict]:
+    """Obsidian-задачи, у которых наступило время напоминания."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM obsidian_tasks
+           WHERE is_done = FALSE
+             AND reminder_sent = FALSE
+             AND due_date = (NOW() AT TIME ZONE 'Europe/Moscow')::date
+             AND due_time IS NOT NULL
+             AND due_time <= (NOW() AT TIME ZONE 'Europe/Moscow')::time
+           ORDER BY due_time ASC""",
+    )
+    return [dict(r) for r in rows]
+
+
+async def mark_obsidian_reminder_sent(task_id: int) -> None:
+    """Пометить obsidian-напоминание как отправленное."""
+    await get_pool().execute(
+        "UPDATE obsidian_tasks SET reminder_sent = TRUE WHERE id = $1", task_id,
+    )
+
+
+async def get_obsidian_today_tasks(user_id: int) -> list[dict]:
+    """Все obsidian-задачи на сегодня."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM obsidian_tasks
+           WHERE user_id = $1
+             AND due_date = (NOW() AT TIME ZONE 'Europe/Moscow')::date
+           ORDER BY is_done ASC, due_time ASC NULLS LAST""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
