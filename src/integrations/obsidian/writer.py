@@ -352,6 +352,61 @@ class ObsidianWriter:
         path.write_text("\n".join(lines), encoding="utf-8")
         logger.info("obsidian.project_readme", project=name)
 
+    async def log_meeting_note(
+        self,
+        project_name: str,
+        transcript: str,
+        analysis: str,
+    ) -> None:
+        """Создать Meeting Note в 05-Projects/{project}/Meeting-YYYY-MM-DD.md."""
+        if not self.enabled:
+            return
+        safe_name = re.sub(r"[^\w\s-]", "", project_name).strip().replace(" ", "-")
+        now = datetime.now(MSK)
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H:%M")
+        filename = f"Meeting-{date_str}.md"
+        path = self.vault / "05-Projects" / safe_name / filename
+
+        # Если файл с такой датой уже есть — добавляем номер
+        counter = 2
+        while path.exists():
+            filename = f"Meeting-{date_str}-{counter}.md"
+            path = self.vault / "05-Projects" / safe_name / filename
+            counter += 1
+
+        self._ensure_dir(path)
+
+        lines = [
+            "---",
+            f"type: meeting",
+            f"project: {project_name}",
+            f"date: {date_str}",
+            f"time: {time_str}",
+            "---",
+            "",
+            f"# 🎙 Meeting — {date_str}",
+            "",
+            f"**Проект:** {project_name}",
+            f"**Дата:** {date_str} {time_str}",
+            "",
+            "---",
+            "",
+            "## 📝 Анализ",
+            "",
+            analysis,
+            "",
+            "---",
+            "",
+            "## 🎤 Транскрипция",
+            "",
+            transcript[:5000],
+            "",
+        ]
+
+        path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("obsidian.meeting_note", project=project_name, path=str(path))
+
     async def log_task_to_daily(self, task_text: str, due_time: str = "", priority: str = "") -> None:
         """Добавить задачу в Daily Note (формат Tasks-плагина)."""
         if not self.enabled:

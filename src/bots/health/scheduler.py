@@ -10,7 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from src.ai.router import chat
-from src.db.queries import get_active_user_ids, get_today_meals, get_meals_range
+from src.db.queries import get_active_user_ids, get_today_meals, get_meals_range, get_active_goals
 from src.utils.telegram import safe_send
 
 logger = structlog.get_logger()
@@ -319,4 +319,52 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Напоминания о лекарствах — каждый час проверяем
+    scheduler.add_job(
+        send_medication_reminders,
+        trigger=CronTrigger(minute=0, timezone=MSK),
+        args=[bot],
+        id="medication_reminders",
+        replace_existing=True,
+    )
+
     return scheduler
+
+
+# === Напоминания о лекарствах ===
+
+async def send_medication_reminders(bot: Bot) -> None:
+    """Проверить расписание лекарств и отправить напоминания."""
+    try:
+        now = datetime.now(MSK)
+        current_hour = now.strftime("%H:%M")
+
+        user_ids = await get_active_user_ids()
+        for uid in user_ids:
+            await _check_medications_for_user(bot, uid, current_hour)
+    except Exception:
+        logger.exception("medication_reminders_failed")
+
+
+async def _check_medications_for_user(bot: Bot, user_id: int, current_time: str) -> None:
+    """Проверить лекарства одного пользователя."""
+    try:
+        goals = await get_active_goals(user_id)
+        medications = [g for g in goals if g.get("type") == "medication"]
+
+        if not medications:
+            return
+
+        due_meds = []
+        for med in medications:
+            times_str = med.get("description", "")
+            times = [t.strip() for t in times_str.split(",") if t.strip()]
+            if current_time in times:
+                due_meds.append(med["title"])
+
+        if due_meds:
+            meds_text = "\n".join(f"  💊 {m}" for m in due_meds)
+            text = f"⏰ <b>Время принять лекарства!</b>\n\n{meds_text}"
+            await safe_send(bot, user_id, text)
+    except Exception:
+        logger.exception("medication_check_failed", user_id=user_id)

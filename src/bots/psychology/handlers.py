@@ -21,6 +21,7 @@ from src.utils.telegram import safe_answer
 from src.db.queries import create_event, get_active_goals, get_cross_bot_summary, get_gratitude_today, get_life_profile, get_user, update_user_settings
 from src.bots.psychology.keyboard import (
     Mode,
+    energy_inline,
     get_user_mode,
     habits_inline,
     main_keyboard,
@@ -260,6 +261,17 @@ async def mode_gratitude(message: Message, db_user: dict) -> None:
     await message.answer(text, reply_markup=main_keyboard())
 
 
+@router.message(F.text == "⚡ Энергия")
+async def mode_energy(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.ENERGY)
+    await message.answer(
+        "⚡ <b>Трекер энергии</b>\n\n"
+        "Оцени свой текущий уровень энергии от 1 до 10:",
+        reply_markup=energy_inline(),
+    )
+
+
 @router.message(F.text == "📋 Мой профиль")
 async def mode_profile(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
@@ -392,6 +404,46 @@ async def cb_mood(callback: CallbackQuery) -> None:
     if callback.message:
         await callback.message.answer(  # type: ignore[union-attr]
             f"{label}\n\nЗаписал. Хочешь добавить что-нибудь к этому дню?",
+            reply_markup=main_keyboard(),
+        )
+
+
+# === Callback: энергия ===
+
+ENERGY_LABELS = {
+    1: "🪫 1 — Полностью разряжен",
+    2: "😴 2 — Очень устал",
+    3: "😑 3 — Мало сил",
+    4: "🙁 4 — Ниже среднего",
+    5: "😐 5 — Нормально",
+    6: "🙂 6 — Неплохо",
+    7: "😊 7 — Хорошо",
+    8: "💪 8 — Много энергии",
+    9: "🔥 9 — Отлично",
+    10: "⚡ 10 — На максимуме!",
+}
+
+
+@router.callback_query(F.data.startswith("psy:energy:"))
+async def cb_energy(callback: CallbackQuery) -> None:
+    score = int(callback.data.split(":")[-1])  # type: ignore[union-attr]
+    user_id = callback.from_user.id
+    label = ENERGY_LABELS.get(score, f"Энергия: {score}")
+
+    event = await create_event(
+        user_id=user_id,
+        event_type="energy",
+        bot_source=BOT_SOURCE,
+        raw_text=f"Энергия: {label} ({score}/10)",
+        json_data={"energy_score": score},
+    )
+
+    await store_event_embedding(event["id"], f"Энергия: {label}", user_id, BOT_SOURCE)
+
+    await callback.answer(label)
+    if callback.message:
+        await callback.message.answer(  # type: ignore[union-attr]
+            f"{label}\n\n⚡ Записал уровень энергии. Отслеживай в течение дня!",
             reply_markup=main_keyboard(),
         )
 

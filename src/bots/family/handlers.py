@@ -369,14 +369,97 @@ async def cmd_budget(message: Message, db_user: dict) -> None:
     await message.answer(text, reply_markup=main_keyboard())
 
 
-# === Callback: выбор проекта ===
+# === /forecast — прогноз расходов на конец месяца ===
 
-@router.callback_query(F.data.startswith("fam:"))
-async def cb_project_action(callback: CallbackQuery) -> None:
-    parts = callback.data.split(":")  # type: ignore[union-attr]
-    if len(parts) != 3:
-        await callback.answer("Ошибка")
+@router.message(Command("forecast"))
+async def cmd_forecast(message: Message, db_user: dict) -> None:
+    """Прогноз расходов до конца месяца на основе текущего темпа."""
+    from calendar import monthrange
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    day_of_month = now.day
+    days_in_month = monthrange(now.year, now.month)[1]
+    days_remaining = days_in_month - day_of_month
+
+    projects = await _ensure_family_project(user_id)
+    project_id = projects[0]["project_id"]
+
+    facts = await get_month_finance_by_category(project_id, now.year, now.month)
+
+    total_expense = 0.0
+    total_income = 0.0
+    cat_expenses: dict[str, float] = {}
+    for r in facts:
+        amount = float(r["total"])
+        if r["transaction_type"] == "expense":
+            total_expense += amount
+            cat_expenses[r["category"]] = amount
+        else:
+            total_income += amount
+
+    if total_expense == 0 and total_income == 0:
+        await message.answer(
+            "📈 Нет данных за текущий месяц для прогноза.",
+            reply_markup=main_keyboard(),
+        )
         return
+
+    # Средний расход в день и прогноз
+    daily_avg = total_expense / max(day_of_month, 1)
+    projected_total = total_expense + daily_avg * days_remaining
+
+    month_names = [
+        "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+        "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+    ]
+
+    text = (
+        f"📈 <b>Прогноз расходов: {month_names[now.month]} {now.year}</b>\n\n"
+        f"📅 День {day_of_month} из {days_in_month} (осталось {days_remaining})\n\n"
+        f"💸 Потрачено: <b>{total_expense:,.0f} ₽</b>\n"
+        f"📊 Средний темп: <b>{daily_avg:,.0f} ₽/день</b>\n"
+        f"🔮 Прогноз на месяц: <b>{projected_total:,.0f} ₽</b>\n"
+    )
+
+    # Сравнение с бюджетными лимитами
+    from src.db.queries import get_project
+    proj = await get_project(project_id)
+    limits = (proj.get("metadata") or {}).get("limits", {})
+    if limits:
+        total_limit = sum(limits.values())
+        diff = total_limit - projected_total
+        if diff >= 0:
+            text += f"\n✅ Вписываетесь в бюджет ({total_limit:,.0f} ₽), запас <b>{diff:,.0f} ₽</b>"
+        else:
+            text += f"\n🔴 Перерасход! Бюджет {total_limit:,.0f} ₽, превышение <b>{-diff:,.0f} ₽</b>"
+
+        # Прогноз по категориям с превышением
+        overruns = []
+        for cat, limit in sorted(limits.items()):
+            fact = cat_expenses.get(cat, 0)
+            cat_daily = fact / max(day_of_month, 1)
+            cat_projected = fact + cat_daily * days_remaining
+            if cat_projected > limit:
+                overruns.append(
+                    f"  🔴 {cat}: {cat_projected:,.0f} / {limit:,.0f} ₽ "
+                    f"(+{cat_projected - limit:,.0f})"
+                )
+        if overruns:
+            text += "\n\n⚠️ <b>Категории с превышением:</b>\n" + "\n".join(overruns)
+    else:
+        text += "\n💡 Задайте бюджетные лимиты через /budget для сравнения с планом."
+
+    if total_income > 0:
+        projected_balance = total_income - projected_total
+        b_emoji = "✅" if projected_balance >= 0 else "🔴"
+        text += f"\n\n💵 Доход: <b>{total_income:,.0f} ₽</b>"
+        text += f"\n{b_emoji} Прогноз баланса: <b>{projected_balance:,.0f} ₽</b>"
+
+    await message.answer(text, reply_markup=main_keyboard())
+
 
     action = parts[1]
     project_id = int(parts[2])

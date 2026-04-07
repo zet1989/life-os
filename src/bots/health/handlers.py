@@ -15,7 +15,7 @@ from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer, safe_edit
-from src.db.queries import create_event, get_today_meals, get_today_water, get_today_workouts, get_user, get_weight_history, update_user_settings
+from src.db.queries import create_event, get_active_goals, get_today_meals, get_today_water, get_today_workouts, get_user, get_weight_history, update_user_settings
 from src.bots.health.prompts import (
     DOCTOR_PHOTO_PROMPT,
     DOCTOR_SYSTEM,
@@ -359,6 +359,108 @@ async def cmd_settings(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     set_user_mode(user_id, Mode.PROFILE)
     await _show_profile(message, user_id)
+
+
+# === 💊 Лекарства ===
+
+@router.message(Command("med_add"))
+async def cmd_med_add(message: Message, db_user: dict) -> None:
+    """Добавить лекарство: /med_add Витамин D 09:00,21:00"""
+    from src.db.queries import create_goal
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/med_add", "").strip()
+
+    if not args:
+        await message.answer(
+            "💊 <b>Добавить лекарство</b>\n\n"
+            "Формат: /med_add <i>Название Время1,Время2</i>\n\n"
+            "Примеры:\n"
+            "<code>/med_add Витамин D 09:00</code>\n"
+            "<code>/med_add Омега-3 09:00,21:00</code>\n"
+            "<code>/med_add Магний 22:00</code>",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    # Парсим: последний аргумент — время через запятую
+    parts = args.rsplit(" ", 1)
+    if len(parts) == 2 and re.match(r"^[\d:,]+$", parts[1]):
+        med_name = parts[0].strip()
+        times_str = parts[1].strip()
+    else:
+        med_name = args.strip()
+        times_str = "09:00"
+
+    # Валидация времени
+    times = [t.strip() for t in times_str.split(",") if t.strip()]
+    valid_times = []
+    for t in times:
+        if re.match(r"^\d{1,2}:\d{2}$", t):
+            valid_times.append(t)
+
+    if not valid_times:
+        valid_times = ["09:00"]
+
+    await create_goal(
+        user_id=user_id,
+        goal_type="medication",
+        title=med_name,
+        description=",".join(valid_times),
+    )
+
+    await message.answer(
+        f"✅ Лекарство добавлено: <b>{med_name}</b>\n"
+        f"⏰ Напоминания: {', '.join(valid_times)}\n\n"
+        f"📋 Список: /med_list\n"
+        f"🗑 Удалить: /med_del",
+        reply_markup=main_keyboard(),
+    )
+
+
+@router.message(Command("med_list"))
+async def cmd_med_list(message: Message, db_user: dict) -> None:
+    """Список лекарств с расписанием."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    goals = await get_active_goals(user_id)
+    medications = [g for g in goals if g.get("type") == "medication"]
+
+    if not medications:
+        await message.answer(
+            "💊 Нет активных лекарств.\n"
+            "Добавь: /med_add <i>Название Время</i>",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    text = "💊 <b>Мои лекарства:</b>\n\n"
+    for m in medications:
+        times = m.get("description", "09:00")
+        text += f"• <b>{m['title']}</b> — ⏰ {times} (ID: {m['id']})\n"
+    text += "\n🗑 Удалить: /med_del <code>ID</code>"
+
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+@router.message(Command("med_del"))
+async def cmd_med_del(message: Message, db_user: dict) -> None:
+    """Удалить лекарство: /med_del ID"""
+    from src.db.queries import update_goal
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/med_del", "").strip()
+
+    if not args or not args.isdigit():
+        await message.answer(
+            "Использование: /med_del <ID лекарства>\n"
+            "Узнать ID: /med_list",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    goal_id = int(args)
+    await update_goal(goal_id, user_id, status="achieved")
+    await message.answer(f"✅ Лекарство #{goal_id} удалено.", reply_markup=main_keyboard())
 
 
 # === Фото → КБЖУ ===

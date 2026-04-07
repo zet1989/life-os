@@ -269,6 +269,12 @@ async def _attach_discussion_to_project(
         fin = await get_finance_summary(project_id)
         evts = await get_project_events(project_id, limit=10)
         await obsidian.update_project_readme(proj, fin, evts)
+        # Создать Meeting Note в Obsidian
+        await obsidian.log_meeting_note(
+            project_name=proj.get("name", "Unknown"),
+            transcript=transcript,
+            analysis=result,
+        )
 
     if callback.message:
         await callback.message.answer(result, reply_markup=main_keyboard())  # type: ignore[union-attr]
