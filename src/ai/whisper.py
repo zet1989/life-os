@@ -19,8 +19,8 @@ _model: WhisperModel | None = None
 def _get_model() -> WhisperModel:
     global _model
     if _model is None:
-        logger.info("whisper_loading_model", model="large-v3")
-        _model = WhisperModel("large-v3", device="cpu", compute_type="int8")
+        logger.info("whisper_loading_model", model="medium")
+        _model = WhisperModel("medium", device="cpu", compute_type="int8")
         logger.info("whisper_model_ready")
     return _model
 
@@ -105,5 +105,5 @@ async def summarize_long_voice(
 def _transcribe_sync(audio_path: str) -> str:
     """Синхронная транскрипция (вызывается в executor)."""
     model = _get_model()
-    segments, _info = model.transcribe(audio_path, language="ru", beam_size=5)
+    segments, _info = model.transcribe(audio_path, language="ru", beam_size=1)
     return " ".join(seg.text.strip() for seg in segments).strip()
