@@ -13,6 +13,7 @@ services:
     volumes:
       - media_data:/app/media
       - whisper_cache:/root/.cache/huggingface
+      - obsidian_vault:/app/obsidian-vault
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8443/status')"]
       interval: 30s
@@ -58,8 +59,25 @@ services:
     profiles:
       - production
 
+  syncthing:
+    image: syncthing/syncthing:latest
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - syncthing_config:/var/syncthing/config
+      - obsidian_vault:/var/syncthing/data/LifeOS
+    ports:
+      - "8384:8384"       # Web UI
+      - "22000:22000/tcp" # Sync protocol
+      - "22000:22000/udp"
+      - "21027:21027/udp" # Discovery
+
 volumes:
   pg_data:
   redis_data:
   media_data:
   whisper_cache:
+  syncthing_config:
+  obsidian_vault:
