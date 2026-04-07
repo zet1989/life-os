@@ -131,6 +131,32 @@ CREATE INDEX idx_finances_project ON finances(project_id, timestamp DESC);
 CREATE INDEX idx_goals_user ON goals(user_id, status);
 
 -- =========================================
+-- Планировщик задач (Obsidian + Telegram)
+-- =========================================
+
+CREATE TABLE tasks (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(user_id),
+    task_text TEXT NOT NULL,
+    source TEXT DEFAULT 'telegram',          -- telegram, obsidian
+    source_file TEXT,                         -- путь к .md файлу (для Obsidian)
+    due_date DATE,
+    due_time TIME,                            -- NULL если без точного времени
+    priority TEXT DEFAULT 'normal',           -- low, normal, high, urgent
+    project_id INT REFERENCES projects(project_id),
+    is_done BOOLEAN DEFAULT FALSE,
+    reminder_sent BOOLEAN DEFAULT FALSE,
+    done_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_tasks_user_date ON tasks(user_id, due_date)
+    WHERE is_done = FALSE;
+CREATE INDEX idx_tasks_reminders ON tasks(due_date, due_time)
+    WHERE is_done = FALSE AND reminder_sent = FALSE;
+
+-- =========================================
 -- RPC-функции
 -- =========================================
 

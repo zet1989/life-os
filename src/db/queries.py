@@ -538,3 +538,170 @@ async def get_expense_data(user_id: int, project_id: int | None = None) -> list[
             user_id,
         )
     return [dict(r) for r in rows]
+
+
+# === Tasks (Планировщик) ===
+
+async def create_task(
+    user_id: int,
+    task_text: str,
+    due_date: str | None = None,
+    due_time: str | None = None,
+    priority: str = "normal",
+    project_id: int | None = None,
+    source: str = "telegram",
+    source_file: str | None = None,
+) -> dict:
+    """Создать задачу."""
+    row = await get_pool().fetchrow(
+        """INSERT INTO tasks (user_id, task_text, due_date, due_time, priority,
+                              project_id, source, source_file)
+           VALUES ($1, $2, $3::date, $4::time, $5, $6, $7, $8) RETURNING *""",
+        user_id, task_text, due_date, due_time, priority,
+        project_id, source, source_file,
+    )
+    return dict(row)
+
+
+async def get_tasks_by_date(user_id: int, date: str) -> list[dict]:
+    """Задачи на конкретную дату (YYYY-MM-DD)."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           WHERE t.user_id = $1 AND t.due_date = $2::date
+           ORDER BY t.is_done ASC, t.due_time ASC NULLS LAST, t.priority DESC""",
+        user_id, date,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_today_tasks(user_id: int) -> list[dict]:
+    """Задачи на сегодня (MSK)."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           WHERE t.user_id = $1
+             AND t.due_date = (NOW() AT TIME ZONE 'Europe/Moscow')::date
+           ORDER BY t.is_done ASC, t.due_time ASC NULLS LAST, t.priority DESC""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_overdue_tasks(user_id: int) -> list[dict]:
+    """Просроченные невыполненные задачи."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           WHERE t.user_id = $1
+             AND t.is_done = FALSE
+             AND t.due_date < (NOW() AT TIME ZONE 'Europe/Moscow')::date
+           ORDER BY t.due_date ASC""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_week_tasks(user_id: int) -> list[dict]:
+    """Задачи на текущую неделю (MSK)."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           WHERE t.user_id = $1
+             AND t.due_date >= date_trunc('week', (NOW() AT TIME ZONE 'Europe/Moscow')::date)
+             AND t.due_date < date_trunc('week', (NOW() AT TIME ZONE 'Europe/Moscow')::date) + INTERVAL '7 days'
+           ORDER BY t.due_date ASC, t.is_done ASC, t.due_time ASC NULLS LAST""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def complete_task(task_id: int, user_id: int) -> bool:
+    """Отметить задачу выполненной (ACL: только владелец)."""
+    result = await get_pool().execute(
+        """UPDATE tasks SET is_done = TRUE, done_at = NOW(), updated_at = NOW()
+           WHERE id = $1 AND user_id = $2""",
+        task_id, user_id,
+    )
+    return result != "UPDATE 0"
+
+
+async def uncomplete_task(task_id: int, user_id: int) -> bool:
+    """Снять отметку выполненной."""
+    result = await get_pool().execute(
+        """UPDATE tasks SET is_done = FALSE, done_at = NULL, updated_at = NOW()
+           WHERE id = $1 AND user_id = $2""",
+        task_id, user_id,
+    )
+    return result != "UPDATE 0"
+
+
+async def reschedule_task(task_id: int, user_id: int, new_date: str) -> bool:
+    """Перенести задачу на другую дату."""
+    result = await get_pool().execute(
+        """UPDATE tasks SET due_date = $3::date, reminder_sent = FALSE, updated_at = NOW()
+           WHERE id = $1 AND user_id = $2""",
+        task_id, user_id, new_date,
+    )
+    return result != "UPDATE 0"
+
+
+async def delete_task(task_id: int, user_id: int) -> bool:
+    """Удалить задачу (ACL: только владелец)."""
+    result = await get_pool().execute(
+        "DELETE FROM tasks WHERE id = $1 AND user_id = $2",
+        task_id, user_id,
+    )
+    return result != "DELETE 0"
+
+
+async def get_pending_task_reminders() -> list[dict]:
+    """Задачи, у которых наступило время напоминания (для scheduler)."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, u.display_name
+           FROM tasks t
+           JOIN users u ON t.user_id = u.user_id
+           WHERE t.is_done = FALSE
+             AND t.reminder_sent = FALSE
+             AND t.due_date = (NOW() AT TIME ZONE 'Europe/Moscow')::date
+             AND t.due_time IS NOT NULL
+             AND t.due_time <= (NOW() AT TIME ZONE 'Europe/Moscow')::time
+           ORDER BY t.due_time ASC""",
+    )
+    return [dict(r) for r in rows]
+
+
+async def mark_reminder_sent(task_id: int) -> None:
+    """Пометить, что напоминание отправлено."""
+    await get_pool().execute(
+        "UPDATE tasks SET reminder_sent = TRUE WHERE id = $1", task_id,
+    )
+
+
+async def get_unclosed_tasks(user_id: int) -> list[dict]:
+    """Невыполненные задачи на сегодня (для вечернего обзора)."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM tasks
+           WHERE user_id = $1
+             AND is_done = FALSE
+             AND due_date = (NOW() AT TIME ZONE 'Europe/Moscow')::date
+           ORDER BY due_time ASC NULLS LAST""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_completed_today_count(user_id: int) -> int:
+    """Количество выполненных задач за сегодня."""
+    val = await get_pool().fetchval(
+        """SELECT COUNT(*) FROM tasks
+           WHERE user_id = $1
+             AND is_done = TRUE
+             AND due_date = (NOW() AT TIME ZONE 'Europe/Moscow')::date""",
+        user_id,
+    )
+    return int(val)

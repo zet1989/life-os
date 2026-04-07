@@ -1,18 +1,33 @@
-"""Планировщик ежемесячного аудита для бота Master Intelligence.
+"""Планировщик для бота Master Intelligence.
 
-Cron: 1-го числа каждого месяца в 10:00 MSK.
-Аудит: финансы (SQL) + цели + дневник (RAG) → LLM анализ.
+Задачи:
+- Ежемесячный аудит (1-го числа в 10:00 MSK)
+- Утренний брифинг (08:00 MSK)
+- Вечерний обзор (21:00 MSK)
+- Напоминания о задачах (каждую минуту)
 """
 
 import structlog
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from src.ai.rag import search
 from src.ai.router import chat
-from src.db.queries import get_active_goals, get_admin_users, get_finance_summary, get_user_projects
-from src.bots.master.prompts import AUDIT_PROMPT, MASTER_SYSTEM, VISION_CONTEXT
+from src.db.queries import (
+    get_active_goals,
+    get_admin_users,
+    get_completed_today_count,
+    get_finance_summary,
+    get_overdue_tasks,
+    get_pending_task_reminders,
+    get_today_tasks,
+    get_unclosed_tasks,
+    get_user_projects,
+    mark_reminder_sent,
+)
+from src.bots.master.prompts import AUDIT_PROMPT, EVENING_REVIEW_HEADER, MASTER_SYSTEM, VISION_CONTEXT
 
 logger = structlog.get_logger()
 
@@ -101,8 +116,10 @@ async def _send_audit_to_user(bot: Bot, user_id: int) -> None:
 
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
-    """Планировщик: аудит 1-го числа в 10:00 MSK."""
+    """Планировщик Master-бота."""
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+
+    # Ежемесячный аудит — 1-го числа в 10:00
     scheduler.add_job(
         send_monthly_audit,
         trigger=CronTrigger(day=1, hour=10, minute=0),
@@ -110,4 +127,175 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="monthly_life_audit",
         replace_existing=True,
     )
+
+    # Утренний брифинг — 08:00 каждый день
+    scheduler.add_job(
+        send_morning_briefing,
+        trigger=CronTrigger(hour=8, minute=0),
+        args=[bot],
+        id="morning_briefing",
+        replace_existing=True,
+    )
+
+    # Вечерний обзор — 21:00 каждый день
+    scheduler.add_job(
+        send_evening_review,
+        trigger=CronTrigger(hour=21, minute=0),
+        args=[bot],
+        id="evening_review",
+        replace_existing=True,
+    )
+
+    # Напоминания о задачах — каждую минуту
+    scheduler.add_job(
+        send_task_reminders,
+        trigger=IntervalTrigger(minutes=1),
+        args=[bot],
+        id="task_reminders",
+        replace_existing=True,
+    )
+
     return scheduler
+
+
+# === Утренний брифинг ===
+
+async def send_morning_briefing(bot: Bot) -> None:
+    """Утренний брифинг для admin-пользователей."""
+    try:
+        admins = await get_admin_users()
+        for admin in admins:
+            await _send_briefing_to_user(bot, admin["user_id"])
+    except Exception:
+        logger.exception("morning_briefing_failed")
+
+
+async def _send_briefing_to_user(bot: Bot, user_id: int) -> None:
+    """Утренний брифинг для одного пользователя."""
+    try:
+        tasks = await get_today_tasks(user_id)
+        overdue = await get_overdue_tasks(user_id)
+        goals = await get_active_goals(user_id)
+
+        total = len(tasks)
+        urgent = sum(1 for t in tasks if t.get("priority") == "urgent")
+
+        text = "☀️ <b>Доброе утро!</b>\n\n"
+
+        # Задачи на сегодня
+        if tasks:
+            text += f"📋 Задачи на сегодня: <b>{total}</b>"
+            if urgent:
+                text += f" (🔴 срочных: {urgent})"
+            text += "\n\n"
+
+            for t in tasks:
+                if not t["is_done"]:
+                    prio = {"low": "⬜", "normal": "🔵", "high": "🟠", "urgent": "🔴"}.get(
+                        t.get("priority", "normal"), ""
+                    )
+                    time_str = t["due_time"].strftime("%H:%M") if t.get("due_time") else ""
+                    time_part = f"<b>{time_str}</b> — " if time_str else ""
+                    text += f"  {prio} {time_part}{t['task_text']}\n"
+        else:
+            text += "📋 На сегодня задач нет.\n"
+
+        # Просроченные
+        if overdue:
+            text += f"\n🔴 Просрочено: <b>{len(overdue)}</b>\n"
+            for t in overdue[:3]:
+                d = t["due_date"].strftime("%d.%m") if t.get("due_date") else ""
+                text += f"  ⚠️ [{d}] {t['task_text']}\n"
+
+        # Главная цель
+        if goals:
+            top_goal = goals[0]
+            text += f"\n🎯 Фокус: <b>{top_goal['title']}</b> — {top_goal.get('progress_pct', 0)}%"
+
+        await bot.send_message(user_id, text)
+
+    except Exception:
+        logger.exception("briefing_user_failed", user_id=user_id)
+
+
+# === Вечерний обзор ===
+
+async def send_evening_review(bot: Bot) -> None:
+    """Вечерний обзор для admin-пользователей."""
+    try:
+        admins = await get_admin_users()
+        for admin in admins:
+            await _send_evening_to_user(bot, admin["user_id"])
+    except Exception:
+        logger.exception("evening_review_failed")
+
+
+async def _send_evening_to_user(bot: Bot, user_id: int) -> None:
+    """Вечерний обзор для одного пользователя."""
+    try:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        tasks = await get_today_tasks(user_id)
+        done_count = sum(1 for t in tasks if t["is_done"])
+        total = len(tasks)
+        unclosed = [t for t in tasks if not t["is_done"]]
+
+        text = EVENING_REVIEW_HEADER
+
+        if total == 0:
+            text += "Сегодня задач не было.\n"
+        else:
+            text += f"✅ Выполнено: <b>{done_count}/{total}</b>\n\n"
+
+            if unclosed:
+                text += "❌ <b>Не выполнено:</b>\n"
+                for t in unclosed:
+                    text += f"  • {t['task_text']}\n"
+
+        if unclosed:
+            tomorrow = (datetime.now(ZoneInfo("Europe/Moscow")) + timedelta(days=1)).strftime("%Y-%m-%d")
+            buttons = []
+            for t in unclosed[:5]:
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=f"📅 {t['task_text'][:25]}→завтра",
+                        callback_data=f"task_reschedule:{t['id']}:{tomorrow}",
+                    ),
+                    InlineKeyboardButton(
+                        text="🗑",
+                        callback_data=f"task_delete:{t['id']}",
+                    ),
+                ])
+            keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+            await bot.send_message(user_id, text, reply_markup=keyboard)
+        else:
+            if total > 0:
+                text += "\n🎉 Все задачи выполнены! Отличный день."
+            await bot.send_message(user_id, text)
+
+    except Exception:
+        logger.exception("evening_user_failed", user_id=user_id)
+
+
+# === Напоминания о задачах ===
+
+async def send_task_reminders(bot: Bot) -> None:
+    """Отправить напоминания о задачах, у которых наступило время."""
+    try:
+        pending = await get_pending_task_reminders()
+        for task in pending:
+            try:
+                time_str = task["due_time"].strftime("%H:%M") if task.get("due_time") else ""
+                text = (
+                    f"⏰ <b>Напоминание</b>\n\n"
+                    f"{task['task_text']}\n"
+                    f"🕐 {time_str}"
+                )
+                await bot.send_message(task["user_id"], text)
+                await mark_reminder_sent(task["id"])
+            except Exception:
+                logger.exception("reminder_send_failed", task_id=task["id"])
+    except Exception:
+        logger.exception("task_reminders_failed")

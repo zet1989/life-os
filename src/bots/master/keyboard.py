@@ -18,6 +18,8 @@ class Mode(str, Enum):
     AI_PANEL = "ai_panel"
     PROMPTS = "prompts"
     SET_PROMPT = "set_prompt"  # ожидаем текст промпта для выбранного проекта
+    TASKS = "tasks"
+    ADD_TASK = "add_task"  # ожидаем текст новой задачи
 
 
 # user_id → текущий режим
@@ -45,11 +47,11 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     """Главная клавиатура Master-бота."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="🎯 Цели и Мечты")],
-            [KeyboardButton(text="⚙️ Проекты"), KeyboardButton(text="📊 Сводный отчёт")],
-            [KeyboardButton(text="💰 Финансовая панорама"), KeyboardButton(text="🤖 AI Панель")],
-            [KeyboardButton(text="📋 Промпты"), KeyboardButton(text="➕ Цель"), KeyboardButton(text="📊 Графики")],
-            [KeyboardButton(text="ℹ️ Статус")],
+            [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="📋 Задачи")],
+            [KeyboardButton(text="🎯 Цели и Мечты"), KeyboardButton(text="⚙️ Проекты")],
+            [KeyboardButton(text="📊 Сводный отчёт"), KeyboardButton(text="💰 Финансовая панорама")],
+            [KeyboardButton(text="🤖 AI Панель"), KeyboardButton(text="📋 Промпты")],
+            [KeyboardButton(text="➕ Цель"), KeyboardButton(text="📊 Графики"), KeyboardButton(text="ℹ️ Статус")],
         ],
         resize_keyboard=True,
     )

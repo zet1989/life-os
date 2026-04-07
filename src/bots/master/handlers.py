@@ -7,13 +7,19 @@
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import structlog
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import FSInputFile, Message
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from src.utils.telegram import safe_answer, safe_edit
 
 from src.ai.rag import rag_answer, search, store_event_embedding
@@ -21,13 +27,21 @@ from src.ai.router import chat, get_model_config
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.db.queries import (
+    complete_task,
     create_event,
     create_goal,
+    create_task,
+    delete_task,
     get_active_goals,
     get_cross_bot_summary,
     get_finance_summary,
+    get_overdue_tasks,
     get_project,
+    get_today_tasks,
     get_user_projects,
+    get_week_tasks,
+    reschedule_task,
+    uncomplete_task,
     update_goal,
     update_project_metadata,
 )
@@ -41,10 +55,12 @@ from src.bots.master.keyboard import (
 )
 from src.bots.master.prompts import (
     AUDIT_PROMPT,
+    EVENING_REVIEW_HEADER,
     GOAL_ADD_PROMPT,
     MASTER_SYSTEM,
     PANORAMA_HEADER,
     PROACTIVE_PROMPT,
+    TASK_PARSE_PROMPT,
     VISION_CONTEXT,
 )
 
@@ -255,6 +271,286 @@ async def btn_charts(message: Message, db_user: dict) -> None:
 @router.message(F.text == "ℹ️ Статус")
 async def btn_status(message: Message, db_user: dict) -> None:
     await cmd_status(message, db_user)
+
+
+# === Задачи (Планировщик) ===
+
+PRIORITY_EMOJI = {"low": "⬜", "normal": "🔵", "high": "🟠", "urgent": "🔴"}
+
+
+def _format_task_line(t: dict) -> str:
+    """Форматировать одну строку задачи."""
+    check = "✅" if t["is_done"] else "⬜"
+    time_str = t["due_time"].strftime("%H:%M") if t.get("due_time") else ""
+    time_part = f"{time_str} — " if time_str else ""
+    prio = PRIORITY_EMOJI.get(t.get("priority", "normal"), "")
+    proj = f" [📁 {t['project_name']}]" if t.get("project_name") else ""
+    return f"{check} {time_part}{t['task_text']}{proj} {prio}"
+
+
+def _tasks_inline_keyboard(tasks: list[dict]) -> InlineKeyboardMarkup:
+    """Inline-кнопки для переключения задач done/undone."""
+    buttons = []
+    for t in tasks:
+        if t["is_done"]:
+            buttons.append([InlineKeyboardButton(
+                text=f"↩️ {t['task_text'][:30]}",
+                callback_data=f"task_undo:{t['id']}",
+            )])
+        else:
+            buttons.append([InlineKeyboardButton(
+                text=f"✅ {t['task_text'][:30]}",
+                callback_data=f"task_done:{t['id']}",
+            )])
+    buttons.append([
+        InlineKeyboardButton(text="➕ Добавить", callback_data="task_add"),
+        InlineKeyboardButton(text="🔄 Просрочено", callback_data="task_overdue"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@router.message(F.text == "📋 Задачи")
+async def mode_tasks(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.TASKS)
+    await _show_today_tasks(message, user_id)
+
+
+async def _show_today_tasks(message: Message, user_id: int, edit: bool = False) -> None:
+    """Показать задачи на сегодня."""
+    today = datetime.now(MSK).strftime("%d.%m.%Y")
+    tasks = await get_today_tasks(user_id)
+    overdue = await get_overdue_tasks(user_id)
+
+    text = f"📋 <b>Задачи на {today}</b>\n\n"
+
+    if not tasks and not overdue:
+        text += "Задач на сегодня нет. Добавь через ➕ или напиши текст.\n"
+        text += "\nКоманды:\n/task <текст> — быстро добавить\n/week — задачи на неделю"
+        if edit:
+            await safe_edit(message, text)
+        else:
+            await safe_answer(message, text, reply_markup=main_keyboard())
+        return
+
+    if overdue:
+        text += f"🔴 <b>Просрочено: {len(overdue)}</b>\n\n"
+
+    done_count = sum(1 for t in tasks if t["is_done"])
+    total = len(tasks)
+    text += f"Выполнено: {done_count}/{total}\n\n"
+
+    for t in tasks:
+        text += _format_task_line(t) + "\n"
+
+    keyboard = _tasks_inline_keyboard(tasks)
+
+    if edit:
+        await safe_edit(message, text, reply_markup=keyboard)
+    else:
+        await safe_answer(message, text, reply_markup=keyboard)
+
+
+# --- Inline callbacks для задач ---
+
+@router.callback_query(F.data.startswith("task_done:"))
+async def cb_task_done(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    await complete_task(task_id, user_id)
+    await callback.answer("✅ Выполнено!")
+    await _show_today_tasks(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+@router.callback_query(F.data.startswith("task_undo:"))
+async def cb_task_undo(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    await uncomplete_task(task_id, user_id)
+    await callback.answer("↩️ Вернул в работу")
+    await _show_today_tasks(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+@router.callback_query(F.data == "task_add")
+async def cb_task_add(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    set_user_mode(user_id, Mode.ADD_TASK)
+    await callback.answer()
+    await callback.message.answer(  # type: ignore[union-attr]
+        "✏️ Напиши задачу. Можно с датой и временем:\n\n"
+        "<i>Созвон по поставкам леса завтра в 14:30</i>\n"
+        "<i>Сдать отчёт до пятницы</i>\n"
+        "<i>Купить продукты</i>",
+        reply_markup=main_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "task_overdue")
+async def cb_task_overdue(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    overdue = await get_overdue_tasks(user_id)
+    await callback.answer()
+
+    if not overdue:
+        await callback.message.answer("✅ Просроченных задач нет!")  # type: ignore[union-attr]
+        return
+
+    text = "🔴 <b>Просроченные задачи:</b>\n\n"
+    buttons = []
+    for t in overdue:
+        date_str = t["due_date"].strftime("%d.%m") if t.get("due_date") else ""
+        text += f"⬜ [{date_str}] {t['task_text']}\n"
+        tomorrow = (datetime.now(MSK) + timedelta(days=1)).strftime("%Y-%m-%d")
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📅 {t['task_text'][:20]}→завтра",
+                callback_data=f"task_reschedule:{t['id']}:{tomorrow}",
+            ),
+            InlineKeyboardButton(
+                text="🗑",
+                callback_data=f"task_delete:{t['id']}",
+            ),
+        ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await callback.message.answer(text, reply_markup=keyboard)  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data.startswith("task_reschedule:"))
+async def cb_task_reschedule(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    parts = callback.data.split(":")  # type: ignore[union-attr]
+    task_id = int(parts[1])
+    new_date = parts[2]
+    await reschedule_task(task_id, user_id, new_date)
+    await callback.answer("📅 Перенесено!")
+    await _show_today_tasks(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+@router.callback_query(F.data.startswith("task_delete:"))
+async def cb_task_delete(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    await delete_task(task_id, user_id)
+    await callback.answer("🗑 Удалено")
+    await _show_today_tasks(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+# --- Команды задач ---
+
+@router.message(Command("task"))
+async def cmd_task(message: Message, db_user: dict) -> None:
+    """Быстрое добавление задачи: /task Созвон завтра в 14:30."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/task", "", 1).strip()
+
+    if not args:
+        await message.answer(
+            "Использование:\n"
+            "<code>/task Созвон по поставкам завтра в 14:30</code>\n"
+            "<code>/task Купить продукты</code>",
+        )
+        return
+
+    await _parse_and_create_task(message, user_id, args)
+
+
+@router.message(Command("week"))
+async def cmd_week(message: Message, db_user: dict) -> None:
+    """Задачи на неделю."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    tasks = await get_week_tasks(user_id)
+
+    if not tasks:
+        await message.answer("📅 На этой неделе задач нет.", reply_markup=main_keyboard())
+        return
+
+    text = "📅 <b>Задачи на неделю:</b>\n\n"
+    current_date = None
+    day_names = {0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"}
+
+    for t in tasks:
+        d = t.get("due_date")
+        if d and d != current_date:
+            current_date = d
+            day_name = day_names.get(d.weekday(), "")
+            text += f"\n<b>{d.strftime('%d.%m')} {day_name}</b>\n"
+        text += f"  {_format_task_line(t)}\n"
+
+    await safe_answer(message, text, reply_markup=main_keyboard())
+
+
+@router.message(Command("done"))
+async def cmd_done(message: Message, db_user: dict) -> None:
+    """Отметить задачу выполненной: /done 5."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/done", "", 1).strip()
+
+    try:
+        task_id = int(args)
+    except ValueError:
+        await message.answer("Использование: <code>/done ID</code>")
+        return
+
+    ok = await complete_task(task_id, user_id)
+    if ok:
+        await message.answer("✅ Задача выполнена!", reply_markup=main_keyboard())
+    else:
+        await message.answer("Задача не найдена или нет доступа.")
+
+
+async def _parse_and_create_task(message: Message, user_id: int, text: str) -> None:
+    """Парсинг текста задачи через LLM и создание."""
+    today = datetime.now(MSK).strftime("%Y-%m-%d")
+    prompt = TASK_PARSE_PROMPT.format(text=text, today=today)
+
+    result = await chat(
+        messages=[
+            {"role": "system", "content": MASTER_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        task_type="master_goal",
+        user_id=user_id,
+        bot_source=BOT_SOURCE,
+    )
+
+    parsed = _extract_json(result)
+    if not parsed or "task_text" not in parsed:
+        # Fallback: создать задачу как есть на сегодня
+        task = await create_task(
+            user_id=user_id,
+            task_text=text[:200],
+            due_date=today,
+        )
+        await message.answer(
+            f"📋 Задача добавлена: <b>{text[:200]}</b>\n📅 Сегодня",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    due_date = parsed.get("due_date") or today
+    due_time = parsed.get("due_time")
+    priority = parsed.get("priority", "normal")
+    task_text = parsed["task_text"]
+
+    task = await create_task(
+        user_id=user_id,
+        task_text=task_text,
+        due_date=due_date,
+        due_time=due_time,
+        priority=priority,
+    )
+
+    prio_emoji = PRIORITY_EMOJI.get(priority, "")
+    time_str = f" ⏰ {due_time}" if due_time else ""
+    date_display = datetime.strptime(due_date, "%Y-%m-%d").strftime("%d.%m.%Y")
+
+    await message.answer(
+        f"📋 Задача добавлена: <b>{task_text}</b>\n"
+        f"📅 {date_display}{time_str} {prio_emoji}",
+        reply_markup=main_keyboard(),
+    )
+    set_user_mode(user_id, Mode.TASKS)
 
 
 # === AI Панель — модели, бесплатные лимиты, маршрутизация ===
@@ -646,6 +942,12 @@ async def handle_text(message: Message, db_user: dict) -> None:
 
 async def _process_input(message: Message, user_id: int, text: str) -> None:
     mode = get_user_mode(user_id)
+
+    if mode == Mode.ADD_TASK:
+        # Добавление задачи через текст
+        set_user_mode(user_id, Mode.TASKS)
+        await _parse_and_create_task(message, user_id, text)
+        return
 
     if mode == Mode.GOALS:
         # Добавление цели через текст
