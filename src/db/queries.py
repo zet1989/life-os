@@ -864,6 +864,73 @@ async def get_week_tasks(user_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_quarter_summary(user_id: int) -> dict:
+    """Сводка за текущий квартал: задачи, финансы, цели."""
+    pool = get_pool()
+    q_start = "date_trunc('quarter', (NOW() AT TIME ZONE 'Europe/Moscow'))"
+
+    completed = await pool.fetchval(
+        f"""SELECT COUNT(*) FROM tasks
+           WHERE user_id = $1 AND is_done = TRUE
+             AND done_at >= {q_start}""",
+        user_id,
+    ) or 0
+
+    created = await pool.fetchval(
+        f"""SELECT COUNT(*) FROM tasks
+           WHERE user_id = $1
+             AND created_at >= {q_start}""",
+        user_id,
+    ) or 0
+
+    overdue = await pool.fetchval(
+        f"""SELECT COUNT(*) FROM tasks
+           WHERE user_id = $1 AND is_done = FALSE
+             AND due_date < (NOW() AT TIME ZONE 'Europe/Moscow')::date
+             AND created_at >= {q_start}""",
+        user_id,
+    ) or 0
+
+    fin_rows = await pool.fetch(
+        f"""SELECT transaction_type, COALESCE(SUM(amount), 0)::numeric(12,2) AS total
+           FROM finances
+           WHERE user_id = $1
+             AND timestamp >= {q_start}
+           GROUP BY transaction_type""",
+        user_id,
+    )
+    q_income = 0.0
+    q_expense = 0.0
+    for r in fin_rows:
+        if r["transaction_type"] == "income":
+            q_income = float(r["total"])
+        else:
+            q_expense = float(r["total"])
+
+    return {
+        "completed": completed,
+        "created": created,
+        "overdue": overdue,
+        "quarter_income": q_income,
+        "quarter_expense": q_expense,
+    }
+
+
+async def get_uncompleted_tasks_for_matrix(user_id: int) -> list[dict]:
+    """Все незавершённые задачи пользователя (для матрицы Эйзенхауэра)."""
+    rows = await get_pool().fetch(
+        """SELECT t.id, t.task_text, t.due_date, t.due_time, t.priority,
+                  t.goal_id, g.title AS goal_title, t.tags
+           FROM tasks t
+           LEFT JOIN goals g ON t.goal_id = g.id
+           WHERE t.user_id = $1 AND t.is_done = FALSE
+             AND t.parent_task_id IS NULL
+           ORDER BY t.due_date ASC NULLS LAST, t.priority DESC""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_week_summary(user_id: int) -> dict:
     """Сводка за текущую неделю: выполнено/создано задач, финансы."""
     pool = get_pool()

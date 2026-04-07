@@ -30,6 +30,7 @@ from src.db.queries import (
     get_obsidian_pending_reminders,
     get_overdue_tasks,
     get_pending_task_reminders,
+    get_quarter_summary,
     get_recurring_tasks_due,
     get_today_tasks,
     get_unclosed_tasks,
@@ -40,7 +41,7 @@ from src.db.queries import (
     mark_reminder_sent,
     spawn_recurring_task,
 )
-from src.bots.master.prompts import AUDIT_PROMPT, EVENING_REVIEW_HEADER, MASTER_SYSTEM, VISION_CONTEXT
+from src.bots.master.prompts import AUDIT_PROMPT, EVENING_REVIEW_HEADER, MASTER_SYSTEM, QUARTERLY_AUDIT_PROMPT, VISION_CONTEXT
 
 logger = structlog.get_logger()
 
@@ -128,6 +129,99 @@ async def _send_audit_to_user(bot: Bot, user_id: int) -> None:
         logger.exception("audit_user_failed", user_id=user_id)
 
 
+async def send_quarterly_audit(bot: Bot) -> None:
+    """Квартальный OKR-аудит для admin-пользователей."""
+    try:
+        admins = await get_admin_users()
+        for admin in admins:
+            await _send_quarterly_to_user(bot, admin["user_id"])
+    except Exception:
+        logger.exception("quarterly_audit_failed")
+
+
+async def _send_quarterly_to_user(bot: Bot, user_id: int) -> None:
+    """Квартальный OKR-аудит для одного пользователя."""
+    try:
+        from src.ai.rag import search
+
+        summary = await get_quarter_summary(user_id)
+        goals = await get_active_goals(user_id)
+
+        completion_rate = (
+            round(summary["completed"] / summary["created"] * 100)
+            if summary["created"] > 0
+            else 0
+        )
+        stats_text = (
+            f"Задач создано: {summary['created']}\n"
+            f"Задач выполнено: {summary['completed']}\n"
+            f"Просрочено: {summary['overdue']}\n"
+            f"Completion rate: {completion_rate}%"
+        )
+
+        balance = summary["quarter_income"] - summary["quarter_expense"]
+        finances_text = (
+            f"Доход: {summary['quarter_income']:,.0f} ₽\n"
+            f"Расход: {summary['quarter_expense']:,.0f} ₽\n"
+            f"Баланс: {balance:+,.0f} ₽"
+        )
+
+        goals_text = ""
+        for g in goals:
+            emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(g["type"], "📌")
+            goals_text += f"{emoji} {g['title']} — {g.get('progress_pct', 0)}%\n"
+        if not goals_text:
+            goals_text = "Целей нет."
+
+        diary_entries = await search(
+            query="достижения прогресс результат проект цель",
+            user_id=user_id,
+            top_k=20,
+            bot_source="master",
+        )
+        events_text = "\n".join(
+            f"[{d.get('timestamp', '')}] {d.get('raw_text', '')[:120]}"
+            for d in diary_entries
+        ) or "Нет данных."
+
+        system = MASTER_SYSTEM
+        if goals:
+            gl = ""
+            for g in goals:
+                gl += f"- [{g['type']}] {g['title']} — {g.get('progress_pct', 0)}%\n"
+            system += VISION_CONTEXT.format(goals=gl)
+
+        prompt = QUARTERLY_AUDIT_PROMPT.format(
+            stats=stats_text,
+            finances=finances_text,
+            goals=goals_text,
+            events=events_text,
+        )
+        result = await chat(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            task_type="master_audit",
+            user_id=user_id,
+            bot_source="master",
+        )
+
+        now = datetime.now(ZoneInfo("Europe/Moscow"))
+        quarter = (now.month - 1) // 3 + 1
+        header = (
+            f"📋 <b>КВАРТАЛЬНЫЙ OKR-АУДИТ (Q{quarter} {now.year})</b>\n\n"
+            f"📊 Задачи: {summary['completed']}/{summary['created']} "
+            f"({completion_rate}%)\n"
+            f"💰 Баланс: {balance:+,.0f} ₽\n\n"
+        )
+
+        await bot.send_message(user_id, header + result)
+
+    except Exception:
+        logger.exception("quarterly_user_failed", user_id=user_id)
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Планировщик Master-бота."""
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
@@ -138,6 +232,15 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=CronTrigger(day=1, hour=10, minute=0),
         args=[bot],
         id="monthly_life_audit",
+        replace_existing=True,
+    )
+
+    # Квартальный OKR — 1-го числа Jan/Apr/Jul/Oct в 10:30
+    scheduler.add_job(
+        send_quarterly_audit,
+        trigger=CronTrigger(month="1,4,7,10", day=1, hour=10, minute=30),
+        args=[bot],
+        id="quarterly_okr_audit",
         replace_existing=True,
     )
 

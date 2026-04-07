@@ -41,12 +41,14 @@ from src.db.queries import (
     get_obsidian_today_tasks,
     get_overdue_tasks,
     get_project,
+    get_quarter_summary,
     get_subtasks,
     get_task_by_id,
     get_tasks_by_date,
     get_tasks_by_tag,
     get_today_focus,
     get_today_tasks,
+    get_uncompleted_tasks_for_matrix,
     get_user_projects,
     get_week_tasks,
     reorder_task,
@@ -1188,6 +1190,169 @@ async def cmd_weekly(message: Message, db_user: dict) -> None:
     text += "💡 <i>Советы: пересмотри просроченные, спланируй следующую неделю, обнови прогресс целей.</i>"
 
     await processing.edit_text(text)
+
+
+# === /quarterly — квартальный аудит (OKR стиль) ===
+
+@router.message(Command("quarterly"))
+async def cmd_quarterly(message: Message, db_user: dict) -> None:
+    """Квартальный OKR-аудит: задачи, финансы, цели за квартал."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    processing = await message.answer("⏳ Формирую квартальный OKR-аудит...")
+
+    from src.bots.master.prompts import QUARTERLY_AUDIT_PROMPT
+
+    summary = await get_quarter_summary(user_id)
+    goals = await get_active_goals(user_id)
+
+    # Статистика
+    completion_rate = (
+        round(summary["completed"] / summary["created"] * 100)
+        if summary["created"] > 0
+        else 0
+    )
+    stats_text = (
+        f"Задач создано: {summary['created']}\n"
+        f"Задач выполнено: {summary['completed']}\n"
+        f"Просрочено: {summary['overdue']}\n"
+        f"Completion rate: {completion_rate}%"
+    )
+
+    # Финансы
+    balance = summary["quarter_income"] - summary["quarter_expense"]
+    finances_text = (
+        f"Доход: {summary['quarter_income']:,.0f} ₽\n"
+        f"Расход: {summary['quarter_expense']:,.0f} ₽\n"
+        f"Баланс: {balance:+,.0f} ₽"
+    )
+
+    # Цели
+    goals_text = ""
+    for g in goals:
+        emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(g["type"], "📌")
+        goals_text += f"{emoji} {g['title']} — {g.get('progress_pct', 0)}%\n"
+    if not goals_text:
+        goals_text = "Целей нет."
+
+    # Ключевые события за квартал (RAG)
+    diary_entries = await search(
+        query="достижения прогресс результат проект цель",
+        user_id=user_id,
+        top_k=20,
+        bot_source="master",
+    )
+    events_text = "\n".join(
+        f"[{d.get('timestamp', '')}] {d.get('raw_text', '')[:120]}"
+        for d in diary_entries
+    ) or "Нет данных."
+
+    # System prompt с целями
+    system = await _system_with_vision(user_id)
+
+    prompt = QUARTERLY_AUDIT_PROMPT.format(
+        stats=stats_text,
+        finances=finances_text,
+        goals=goals_text,
+        events=events_text,
+    )
+    result = await chat(
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        task_type="master_audit",
+        user_id=user_id,
+        bot_source="master",
+    )
+
+    now = datetime.now(MSK)
+    quarter = (now.month - 1) // 3 + 1
+    header = f"📋 <b>КВАРТАЛЬНЫЙ OKR-АУДИТ (Q{quarter} {now.year})</b>\n\n"
+    header += (
+        f"📊 Задачи: {summary['completed']}/{summary['created']} "
+        f"({completion_rate}%)\n"
+        f"💰 Баланс: {balance:+,.0f} ₽\n\n"
+    )
+
+    await safe_answer(processing, header + result, edit=True)
+
+
+# === /matrix — Матрица Эйзенхауэра ===
+
+@router.message(Command("matrix"))
+async def cmd_eisenhower_matrix(message: Message, db_user: dict) -> None:
+    """Матрица Эйзенхауэра: автоматическая категоризация задач."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    tasks = await get_uncompleted_tasks_for_matrix(user_id)
+
+    if not tasks:
+        await message.answer("📋 Нет активных задач для матрицы.")
+        return
+
+    today = datetime.now(MSK).date()
+
+    # Категоризация
+    q1_do: list[dict] = []       # Urgent + Important
+    q2_plan: list[dict] = []     # Not Urgent + Important
+    q3_delegate: list[dict] = [] # Urgent + Not Important
+    q4_eliminate: list[dict] = []  # Not Urgent + Not Important
+
+    for t in tasks:
+        due = t.get("due_date")
+        prio = t.get("priority", "normal")
+
+        # Urgent: дедлайн сегодня/просрочен, или priority urgent
+        is_urgent = prio == "urgent" or (due is not None and due <= today)
+
+        # Important: high/urgent priority, или привязана к цели
+        is_important = prio in ("high", "urgent") or t.get("goal_id") is not None
+
+        if is_urgent and is_important:
+            q1_do.append(t)
+        elif not is_urgent and is_important:
+            q2_plan.append(t)
+        elif is_urgent and not is_important:
+            q3_delegate.append(t)
+        else:
+            q4_eliminate.append(t)
+
+    def _fmt_matrix_tasks(items: list[dict], limit: int = 5) -> str:
+        if not items:
+            return "  <i>—</i>\n"
+        lines = ""
+        for t in items[:limit]:
+            due_str = t["due_date"].strftime("%d.%m") if t.get("due_date") else ""
+            due_part = f" [{due_str}]" if due_str else ""
+            goal_part = f" [🎯 {t['goal_title']}]" if t.get("goal_title") else ""
+            lines += f"  • {t['task_text'][:40]}{due_part}{goal_part}\n"
+        if len(items) > limit:
+            lines += f"  <i>...и ещё {len(items) - limit}</i>\n"
+        return lines
+
+    text = "🎯 <b>МАТРИЦА ЭЙЗЕНХАУЭРА</b>\n\n"
+
+    text += f"🔴 <b>ДЕЛАТЬ СЕЙЧАС</b> ({len(q1_do)}):\n"
+    text += f"<i>Срочно + Важно</i>\n"
+    text += _fmt_matrix_tasks(q1_do)
+
+    text += f"\n🟡 <b>ЗАПЛАНИРОВАТЬ</b> ({len(q2_plan)}):\n"
+    text += f"<i>Важно, но НЕ срочно</i>\n"
+    text += _fmt_matrix_tasks(q2_plan)
+
+    text += f"\n🟠 <b>ДЕЛЕГИРОВАТЬ</b> ({len(q3_delegate)}):\n"
+    text += f"<i>Срочно, но НЕ важно</i>\n"
+    text += _fmt_matrix_tasks(q3_delegate)
+
+    text += f"\n⬜ <b>ОТЛОЖИТЬ/УБРАТЬ</b> ({len(q4_eliminate)}):\n"
+    text += f"<i>НЕ срочно + НЕ важно</i>\n"
+    text += _fmt_matrix_tasks(q4_eliminate)
+
+    text += (
+        "\n💡 <i>Критерии: Срочно = дедлайн сегодня/просрочен/priority urgent. "
+        "Важно = priority high/urgent или привязано к цели.</i>"
+    )
+
+    await safe_answer(message, text)
 
 
 # === /repeat — создать повторяющуюся задачу ===
