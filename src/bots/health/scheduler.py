@@ -355,16 +355,22 @@ async def _check_medications_for_user(bot: Bot, user_id: int, current_time: str)
         if not medications:
             return
 
-        due_meds = []
+        due_meds: list[tuple[str, int]] = []
         for med in medications:
             times_str = med.get("description", "")
             times = [t.strip() for t in times_str.split(",") if t.strip()]
             if current_time in times:
-                due_meds.append(med["title"])
+                due_meds.append((med["title"], med["id"]))
 
         if due_meds:
-            meds_text = "\n".join(f"  💊 {m}" for m in due_meds)
-            text = f"⏰ <b>Время принять лекарства!</b>\n\n{meds_text}"
-            await safe_send(bot, user_id, text)
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+            for med_name, med_id in due_meds:
+                text = f"⏰ <b>Время принять лекарство!</b>\n\n  💊 {med_name}"
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="✅ Принял", callback_data=f"med:taken:{med_id}"),
+                    InlineKeyboardButton(text="⏭ Пропустил", callback_data=f"med:skip:{med_id}"),
+                ]])
+                await safe_send(bot, user_id, text, reply_markup=kb)
     except Exception:
         logger.exception("medication_check_failed", user_id=user_id)

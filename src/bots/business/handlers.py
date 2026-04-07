@@ -311,7 +311,18 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     processing = await message.answer("⏳ Транскрибирую...")
     text = await transcribe_voice(bot=bot, voice=message.voice, user_id=user_id, bot_source=BOT_SOURCE)
-    await processing.edit_text(f"🎤 <i>{text}</i>\n\n⏳ Обрабатываю...")
+
+    # Саммаризация длинных голосовых (>5 мин)
+    from src.ai.whisper import summarize_long_voice
+
+    duration = message.voice.duration or 0  # type: ignore[union-attr]
+    summary = await summarize_long_voice(text, duration, user_id, BOT_SOURCE)
+    if summary:
+        await processing.edit_text(
+            f"📋 <b>Краткое содержание:</b>\n{summary}\n\n⏳ Обрабатываю..."
+        )
+    else:
+        await processing.edit_text(f"🎤 <i>{text}</i>\n\n⏳ Обрабатываю...")
     await _process_input(message, user_id, text)
 
 

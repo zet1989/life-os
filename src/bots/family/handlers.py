@@ -461,6 +461,80 @@ async def cmd_forecast(message: Message, db_user: dict) -> None:
     await message.answer(text, reply_markup=main_keyboard())
 
 
+# === /history — историческая аналитика ===
+
+@router.message(Command("history"))
+async def cmd_history(message: Message, db_user: dict) -> None:
+    """Сравнение расходов за несколько месяцев."""
+    from src.db.queries import get_monthly_totals
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    projects = await _ensure_family_project(user_id)
+    project_id = projects[0]["project_id"]
+
+    rows = await get_monthly_totals(project_id, months=6)
+
+    if not rows:
+        await message.answer(
+            "📊 Недостаточно данных для аналитики.\n"
+            "Нужны расходы хотя бы за 1 месяц.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    month_names = [
+        "", "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+        "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек",
+    ]
+
+    # Собираем данные по месяцам
+    months_data: dict[str, dict[str, float]] = {}
+    for r in rows:
+        key = f"{month_names[r['month']]} {r['year']}"
+        if key not in months_data:
+            months_data[key] = {"expense": 0, "income": 0}
+        months_data[key][r["transaction_type"]] += float(r["total"])
+
+    text = "📊 <b>Историческая аналитика (до 6 мес)</b>\n\n"
+
+    prev_expense = None
+    for month_label, data in months_data.items():
+        expense = data["expense"]
+        income = data["income"]
+        balance = income - expense
+        b_emoji = "✅" if balance >= 0 else "🔴"
+
+        text += f"<b>{month_label}:</b>\n"
+        text += f"  💸 Расход: {expense:,.0f} ₽"
+        if prev_expense is not None and prev_expense > 0:
+            change = ((expense - prev_expense) / prev_expense) * 100
+            c_emoji = "📈" if change > 0 else "📉"
+            text += f"  {c_emoji} {change:+.0f}%"
+        text += f"\n  💵 Доход: {income:,.0f} ₽\n"
+        text += f"  {b_emoji} Баланс: {balance:,.0f} ₽\n\n"
+        prev_expense = expense
+
+    # Итоги
+    total_exp = sum(d["expense"] for d in months_data.values())
+    total_inc = sum(d["income"] for d in months_data.values())
+    n_months = len(months_data)
+    avg_exp = total_exp / n_months if n_months > 0 else 0
+    avg_inc = total_inc / n_months if n_months > 0 else 0
+
+    text += (
+        f"📈 <b>Средние значения:</b>\n"
+        f"  💸 Расход/мес: {avg_exp:,.0f} ₽\n"
+        f"  💵 Доход/мес: {avg_inc:,.0f} ₽"
+    )
+
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+# === Callback: выбор проекта ===
+
+@router.callback_query(F.data.startswith("fam:"))
+async def cb_project_select(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":")  # type: ignore[union-attr]
     action = parts[1]
     project_id = int(parts[2])
     user_id = callback.from_user.id
@@ -707,7 +781,18 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     processing = await message.answer("⏳ Транскрибирую...")
     text = await transcribe_voice(bot=bot, voice=message.voice, user_id=user_id, bot_source=BOT_SOURCE)
-    await processing.edit_text(f"🎤 <i>{text}</i>\n\n⏳ Обрабатываю...")
+
+    # Саммаризация длинных голосовых (>5 мин)
+    from src.ai.whisper import summarize_long_voice
+
+    duration = message.voice.duration or 0  # type: ignore[union-attr]
+    summary = await summarize_long_voice(text, duration, user_id, BOT_SOURCE)
+    if summary:
+        await processing.edit_text(
+            f"📋 <b>Краткое содержание:</b>\n{summary}\n\n⏳ Обрабатываю..."
+        )
+    else:
+        await processing.edit_text(f"🎤 <i>{text}</i>\n\n⏳ Обрабатываю...")
     await _process_input(message, user_id, text)
 
 

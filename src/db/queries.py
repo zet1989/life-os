@@ -315,6 +315,24 @@ async def get_month_finance_by_category(project_id: int, year: int, month: int) 
     return [dict(r) for r in rows]
 
 
+async def get_monthly_totals(project_id: int, months: int = 6) -> list[dict]:
+    """Итоги расходов/доходов по месяцам за последние N месяцев (SQL only)."""
+    rows = await get_pool().fetch(
+        """SELECT
+               EXTRACT(YEAR FROM timestamp)::int AS year,
+               EXTRACT(MONTH FROM timestamp)::int AS month,
+               transaction_type,
+               SUM(amount)::numeric(12,2) AS total
+           FROM finances
+           WHERE project_id = $1
+             AND timestamp >= (NOW() - ($2 || ' months')::interval)
+           GROUP BY year, month, transaction_type
+           ORDER BY year, month""",
+        project_id, str(months),
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_project_events(project_id: int, limit: int = 10) -> list[dict]:
     """Последние события проекта."""
     rows = await get_pool().fetch(

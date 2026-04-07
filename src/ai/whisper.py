@@ -60,6 +60,48 @@ async def transcribe_voice(
     return text
 
 
+async def summarize_long_voice(
+    text: str,
+    duration: int,
+    user_id: int | None = None,
+    bot_source: str | None = None,
+) -> str | None:
+    """Саммаризация длинного голосового сообщения (>5 мин) через LLM.
+
+    Возвращает краткое содержание или None если сообщение короткое.
+    """
+    if duration < 300:
+        return None
+
+    from src.ai.router import chat
+
+    minutes = duration // 60
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Ты — AI-ассистент. Тебе дан текст транскрипции длинного голосового сообщения. "
+                "Напиши краткое содержание (3-5 предложений), сохранив ключевые мысли, "
+                "факты, цифры и решения. Не добавляй ничего от себя."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Транскрипция голосового ({minutes} мин):\n\n{text}",
+        },
+    ]
+
+    summary = await chat(
+        messages=messages,
+        task_type="voice_summary",
+        user_id=user_id,
+        bot_source=bot_source,
+    )
+
+    logger.info("voice_summarized", duration=duration, summary_len=len(summary))
+    return summary
+
+
 def _transcribe_sync(audio_path: str) -> str:
     """Синхронная транскрипция (вызывается в executor)."""
     model = _get_model()

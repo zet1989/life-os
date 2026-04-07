@@ -463,6 +463,95 @@ async def cmd_med_del(message: Message, db_user: dict) -> None:
     await message.answer(f"✅ Лекарство #{goal_id} удалено.", reply_markup=main_keyboard())
 
 
+# === Callback: приём/пропуск лекарства ===
+
+@router.callback_query(F.data.startswith("med:taken:") | F.data.startswith("med:skip:"))
+async def cb_medication(callback: CallbackQuery) -> None:
+    """Обработка кнопок ✅ Принял / ⏭ Пропустил."""
+    parts = callback.data.split(":")  # type: ignore[union-attr]
+    action = parts[1]  # taken or skip
+    goal_id = int(parts[2])
+    user_id = callback.from_user.id
+
+    from src.db.queries import get_goal
+
+    goal = await get_goal(goal_id)
+    med_name = goal.get("title", "лекарство") if goal else "лекарство"
+
+    event_type = "medication_taken" if action == "taken" else "medication_skipped"
+    await create_event(
+        user_id=user_id,
+        event_type=event_type,
+        bot_source=BOT_SOURCE,
+        raw_text=f"{med_name}: {'принято' if action == 'taken' else 'пропущено'}",
+        json_data={"goal_id": goal_id, "medication": med_name},
+    )
+
+    if action == "taken":
+        await callback.answer("✅ Отмечено!")
+        if callback.message:
+            await callback.message.edit_text(  # type: ignore[union-attr]
+                f"✅ <b>{med_name}</b> — принято!",
+            )
+    else:
+        await callback.answer("⏭ Пропущено")
+        if callback.message:
+            await callback.message.edit_text(  # type: ignore[union-attr]
+                f"⏭ <b>{med_name}</b> — пропущено.",
+            )
+
+
+# === /med_history — история приёмов лекарств ===
+
+@router.message(Command("med_history"))
+async def cmd_med_history(message: Message, db_user: dict) -> None:
+    """Показать историю приёмов лекарств за последние 7 дней."""
+    from src.db.queries import get_recent_events
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    taken = await get_recent_events(user_id, "medication_taken", BOT_SOURCE, limit=50)
+    skipped = await get_recent_events(user_id, "medication_skipped", BOT_SOURCE, limit=50)
+
+    all_events = sorted(taken + skipped, key=lambda e: e["timestamp"], reverse=True)
+
+    if not all_events:
+        await message.answer(
+            "📋 Нет записей о приёмах лекарств.\n"
+            "Они появятся, когда ты нажмёшь ✅/⏭ в напоминании.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    text = "📋 <b>История приёмов лекарств:</b>\n\n"
+    # Сгруппируем по дате
+    from collections import defaultdict
+
+    by_date: dict[str, list[dict]] = defaultdict(list)
+    for ev in all_events[:30]:
+        ts = ev["timestamp"]
+        day = ts.strftime("%d.%m.%Y") if hasattr(ts, "strftime") else str(ts)[:10]
+        by_date[day].append(ev)
+
+    for day, events in by_date.items():
+        text += f"<b>{day}:</b>\n"
+        for ev in events:
+            ts = ev["timestamp"]
+            time_str = ts.strftime("%H:%M") if hasattr(ts, "strftime") else ""
+            jd = ev.get("json_data") or {}
+            med = jd.get("medication", "?")
+            emoji = "✅" if ev["event_type"] == "medication_taken" else "⏭"
+            text += f"  {emoji} {time_str} — {med}\n"
+        text += "\n"
+
+    # Статистика
+    total = len(all_events)
+    taken_count = len(taken)
+    pct = round(taken_count / total * 100) if total > 0 else 0
+    text += f"📊 Итого: {taken_count}/{total} принято ({pct}%)"
+
+    await message.answer(text, reply_markup=main_keyboard())
+
+
 # === Фото → КБЖУ ===
 
 @router.message(F.photo)

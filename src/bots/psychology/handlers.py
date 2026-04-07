@@ -448,6 +448,113 @@ async def cb_energy(callback: CallbackQuery) -> None:
         )
 
 
+# === /export_diary — экспорт дневника в PDF ===
+
+@router.message(Command("export_diary"))
+async def cmd_export_diary(message: Message, db_user: dict) -> None:
+    """Экспорт всех дневниковых записей в PDF."""
+    import tempfile
+    from pathlib import Path
+
+    from aiogram.types import FSInputFile
+    from fpdf import FPDF
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    processing = await message.answer("⏳ Генерирую PDF...")
+
+    # Собираем дневниковые записи, настроение, энергию, благодарности
+    from src.db.queries import get_recent_events
+
+    diary = await get_recent_events(user_id, "diary", BOT_SOURCE, limit=500)
+    gratitude = await get_recent_events(user_id, "gratitude", BOT_SOURCE, limit=200)
+    energy = await get_recent_events(user_id, "energy", BOT_SOURCE, limit=200)
+
+    all_entries = sorted(diary + gratitude + energy, key=lambda e: e["timestamp"])
+
+    if not all_entries:
+        await processing.edit_text(
+            "📋 Нет записей для экспорта.\n"
+            "Начни вести дневник — записи появятся здесь.",
+        )
+        return
+
+    # Создаём PDF
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    # Добавляем шрифт с поддержкой кириллицы
+    font_path = Path(__file__).parent.parent.parent / "assets" / "DejaVuSans.ttf"
+    if font_path.exists():
+        pdf.add_font("DejaVu", "", str(font_path), uni=True)
+        pdf.add_font("DejaVu", "B", str(font_path.parent / "DejaVuSans-Bold.ttf"), uni=True)
+        font_name = "DejaVu"
+    else:
+        # Fallback — работает только с латиницей, но не упадёт
+        font_name = "Helvetica"
+
+    pdf.add_page()
+    pdf.set_font(font_name, "B", 16)
+    pdf.cell(0, 10, "Life OS - Dnevnik", ln=True, align="C")
+    pdf.set_font(font_name, "", 10)
+
+    first_date = all_entries[0]["timestamp"]
+    last_date = all_entries[-1]["timestamp"]
+    period = f"{first_date.strftime('%d.%m.%Y')} - {last_date.strftime('%d.%m.%Y')}"
+    pdf.cell(0, 8, f"Period: {period} | Entries: {len(all_entries)}", ln=True, align="C")
+    pdf.ln(5)
+
+    current_day = ""
+    for entry in all_entries:
+        ts = entry["timestamp"]
+        day = ts.strftime("%d.%m.%Y")
+        time_str = ts.strftime("%H:%M")
+
+        if day != current_day:
+            current_day = day
+            pdf.ln(3)
+            pdf.set_font(font_name, "B", 12)
+            pdf.cell(0, 8, day, ln=True)
+            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+            pdf.ln(2)
+
+        event_type = entry.get("event_type", "")
+        jd = entry.get("json_data") or {}
+        raw = entry.get("raw_text") or ""
+
+        # Иконка типа
+        type_labels = {
+            "diary": "[Diary]",
+            "gratitude": "[Gratitude]",
+            "energy": "[Energy]",
+        }
+        label = type_labels.get(event_type, f"[{event_type}]")
+
+        # Доп. данные
+        extra = ""
+        if event_type == "diary" and jd.get("mood_score"):
+            extra = f" (mood: {jd['mood_score']}/5)"
+        elif event_type == "energy" and jd.get("energy_score"):
+            extra = f" ({jd['energy_score']}/10)"
+
+        pdf.set_font(font_name, "B", 10)
+        pdf.cell(0, 6, f"{time_str} {label}{extra}", ln=True)
+
+        if raw:
+            pdf.set_font(font_name, "", 9)
+            # Многострочный текст
+            pdf.multi_cell(0, 5, raw[:2000])
+        pdf.ln(2)
+
+    # Сохраняем
+    tmp = Path(tempfile.mktemp(suffix=".pdf"))
+    pdf.output(str(tmp))
+
+    doc = FSInputFile(str(tmp), filename=f"diary_{user_id}.pdf")
+    await message.answer_document(doc, caption=f"📋 Экспорт дневника: {len(all_entries)} записей")
+    await processing.delete()
+    tmp.unlink(missing_ok=True)
+
+
 # === Голосовое → дневник ===
 
 @router.message(F.voice)
@@ -456,7 +563,19 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
     processing = await message.answer("⏳ Транскрибирую...")
 
     text = await transcribe_voice(bot=bot, voice=message.voice, user_id=user_id, bot_source=BOT_SOURCE)
-    await processing.edit_text(f"🎤 <i>{text}</i>\n\n⏳ Анализирую...")
+
+    # Саммаризация длинных голосовых (>5 мин)
+    from src.ai.whisper import summarize_long_voice
+
+    duration = message.voice.duration or 0  # type: ignore[union-attr]
+    summary = await summarize_long_voice(text, duration, user_id, BOT_SOURCE)
+    if summary:
+        await processing.edit_text(
+            f"📋 <b>Краткое содержание ({duration // 60} мин):</b>\n{summary}\n\n"
+            f"🎤 <i>{text[:1000]}{'...' if len(text) > 1000 else ''}</i>\n\n⏳ Анализирую..."
+        )
+    else:
+        await processing.edit_text(f"🎤 <i>{text}</i>\n\n⏳ Анализирую...")
     await _process_diary(message, user_id, text)
 
 
