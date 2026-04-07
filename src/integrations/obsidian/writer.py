@@ -241,6 +241,88 @@ class ObsidianWriter:
             path.write_text(text, encoding="utf-8")
             logger.info("obsidian.task_added", task=task_text)
 
+    # ---------------------------------------------------------------
+    # Двусторонняя синхронизация задач (9.4)
+    # ---------------------------------------------------------------
+
+    async def complete_task_in_md(self, task_text: str, due_date: str | None = None) -> None:
+        """Пометить задачу выполненной в .md файле: - [ ] → - [x] ✅ дата."""
+        if not self.enabled:
+            return
+        done_date = datetime.now(MSK).strftime("%Y-%m-%d")
+        # Ищем в Daily Note соответствующей даты или сегодняшнем
+        paths_to_check = []
+        if due_date:
+            try:
+                from datetime import date as dt_date
+                d = dt_date.fromisoformat(due_date)
+                paths_to_check.append(self.vault / "04-Daily" / f"{d.isoformat()}.md")
+            except ValueError:
+                pass
+        paths_to_check.append(self._daily_path())
+        # Также проверяем все .md в 04-Daily за последнюю неделю
+        daily_dir = self.vault / "04-Daily"
+        if daily_dir.exists():
+            for md_file in sorted(daily_dir.glob("*.md"), reverse=True)[:7]:
+                if md_file not in paths_to_check:
+                    paths_to_check.append(md_file)
+
+        for path in paths_to_check:
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            # Ищем незакрытую задачу с этим текстом
+            pattern = re.compile(
+                r"^(- \[ \]\s+.*?" + re.escape(task_text) + r".*?)$",
+                re.MULTILINE,
+            )
+            m = pattern.search(text)
+            if m:
+                old_line = m.group(1)
+                new_line = old_line.replace("- [ ]", f"- [x]", 1) + f" ✅ {done_date}"
+                text = text.replace(old_line, new_line, 1)
+                path.write_text(text, encoding="utf-8")
+                logger.info("obsidian.task_completed", task=task_text, file=str(path))
+                return
+
+    async def uncomplete_task_in_md(self, task_text: str, due_date: str | None = None) -> None:
+        """Снять отметку выполненной: - [x] → - [ ], убрать ✅ дату."""
+        if not self.enabled:
+            return
+        paths_to_check = []
+        if due_date:
+            try:
+                from datetime import date as dt_date
+                d = dt_date.fromisoformat(due_date)
+                paths_to_check.append(self.vault / "04-Daily" / f"{d.isoformat()}.md")
+            except ValueError:
+                pass
+        paths_to_check.append(self._daily_path())
+        daily_dir = self.vault / "04-Daily"
+        if daily_dir.exists():
+            for md_file in sorted(daily_dir.glob("*.md"), reverse=True)[:7]:
+                if md_file not in paths_to_check:
+                    paths_to_check.append(md_file)
+
+        for path in paths_to_check:
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            pattern = re.compile(
+                r"^(- \[x\]\s+.*?" + re.escape(task_text) + r".*?)$",
+                re.MULTILINE | re.IGNORECASE,
+            )
+            m = pattern.search(text)
+            if m:
+                old_line = m.group(1)
+                # Убираем [x] → [ ] и ✅ дату
+                new_line = re.sub(r"- \[[xX]\]", "- [ ]", old_line, count=1)
+                new_line = re.sub(r"\s*✅\s*\d{4}-\d{2}-\d{2}", "", new_line)
+                text = text.replace(old_line, new_line, 1)
+                path.write_text(text, encoding="utf-8")
+                logger.info("obsidian.task_uncompleted", task=task_text, file=str(path))
+                return
+
 
 # Синглтон
 obsidian = ObsidianWriter()

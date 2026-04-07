@@ -659,6 +659,15 @@ async def uncomplete_task(task_id: int, user_id: int) -> bool:
     return result != "UPDATE 0"
 
 
+async def get_task_by_id(task_id: int, user_id: int) -> dict | None:
+    """Получить задачу по ID (ACL: только владелец)."""
+    row = await get_pool().fetchrow(
+        "SELECT * FROM tasks WHERE id = $1 AND user_id = $2",
+        task_id, user_id,
+    )
+    return dict(row) if row else None
+
+
 async def reschedule_task(task_id: int, user_id: int, new_date: str) -> bool:
     """Перенести задачу на другую дату."""
     result = await get_pool().execute(

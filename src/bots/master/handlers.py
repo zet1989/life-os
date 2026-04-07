@@ -35,8 +35,10 @@ from src.db.queries import (
     get_active_goals,
     get_cross_bot_summary,
     get_finance_summary,
+    get_obsidian_today_tasks,
     get_overdue_tasks,
     get_project,
+    get_task_by_id,
     get_today_tasks,
     get_user_projects,
     get_week_tasks,
@@ -318,14 +320,15 @@ async def mode_tasks(message: Message, db_user: dict) -> None:
 
 
 async def _show_today_tasks(message: Message, user_id: int, edit: bool = False) -> None:
-    """Показать задачи на сегодня."""
+    """Показать задачи на сегодня (Telegram + Obsidian)."""
     today = datetime.now(MSK).strftime("%d.%m.%Y")
     tasks = await get_today_tasks(user_id)
     overdue = await get_overdue_tasks(user_id)
+    obs_tasks = await get_obsidian_today_tasks(user_id)
 
     text = f"📋 <b>Задачи на {today}</b>\n\n"
 
-    if not tasks and not overdue:
+    if not tasks and not overdue and not obs_tasks:
         text += "Задач на сегодня нет. Добавь через ➕ или напиши текст.\n"
         text += "\nКоманды:\n/task <текст> — быстро добавить\n/week — задачи на неделю"
         if edit:
@@ -344,6 +347,20 @@ async def _show_today_tasks(message: Message, user_id: int, edit: bool = False) 
     for t in tasks:
         text += _format_task_line(t) + "\n"
 
+    # Obsidian-задачи (не дублируются с основными)
+    task_texts = {t["task_text"].strip().lower() for t in tasks}
+    obs_unique = [ot for ot in obs_tasks if ot["task_text"].strip().lower() not in task_texts]
+    if obs_unique:
+        text += f"\n📝 <b>Из Obsidian:</b>\n"
+        for ot in obs_unique:
+            check = "✅" if ot["is_done"] else "⬜"
+            time_str = ot["due_time"].strftime("%H:%M") if ot.get("due_time") else ""
+            time_part = f"{time_str} — " if time_str else ""
+            src = ot.get("source_file", "")
+            src_short = src.split("/")[-1] if src else ""
+            src_part = f" 📂 {src_short}" if src_short else ""
+            text += f"{check} {time_part}{ot['task_text']}{src_part}\n"
+
     keyboard = _tasks_inline_keyboard(tasks)
 
     if edit:
@@ -358,7 +375,11 @@ async def _show_today_tasks(message: Message, user_id: int, edit: bool = False) 
 async def cb_task_done(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    task = await get_task_by_id(task_id, user_id)
     await complete_task(task_id, user_id)
+    if task:
+        due = task["due_date"].isoformat() if task.get("due_date") else None
+        await obsidian.complete_task_in_md(task["task_text"], due_date=due)
     await callback.answer("✅ Выполнено!")
     await _show_today_tasks(callback.message, user_id, edit=True)  # type: ignore[arg-type]
 
@@ -367,7 +388,11 @@ async def cb_task_done(callback: CallbackQuery) -> None:
 async def cb_task_undo(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    task = await get_task_by_id(task_id, user_id)
     await uncomplete_task(task_id, user_id)
+    if task:
+        due = task["due_date"].isoformat() if task.get("due_date") else None
+        await obsidian.uncomplete_task_in_md(task["task_text"], due_date=due)
     await callback.answer("↩️ Вернул в работу")
     await _show_today_tasks(callback.message, user_id, edit=True)  # type: ignore[arg-type]
 
@@ -493,8 +518,12 @@ async def cmd_done(message: Message, db_user: dict) -> None:
         await message.answer("Использование: <code>/done ID</code>")
         return
 
+    task = await get_task_by_id(task_id, user_id)
     ok = await complete_task(task_id, user_id)
     if ok:
+        if task:
+            due = task["due_date"].isoformat() if task.get("due_date") else None
+            await obsidian.complete_task_in_md(task["task_text"], due_date=due)
         await message.answer("✅ Задача выполнена!", reply_markup=main_keyboard())
     else:
         await message.answer("Задача не найдена или нет доступа.")
