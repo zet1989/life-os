@@ -20,6 +20,7 @@ class Mode(StrEnum):
     INCOME = "income"
     REPORT = "report"
     CATEGORIES = "categories"
+    CHARTS = "charts"
     SETTINGS = "settings"
 
 
@@ -28,7 +29,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="💰 Расход"), KeyboardButton(text="💵 Доход")],
             [KeyboardButton(text="📊 Отчёт"), KeyboardButton(text="📈 Категории")],
-            [KeyboardButton(text="⚙️ Настройки")],
+            [KeyboardButton(text="📉 Графики"), KeyboardButton(text="⚙️ Настройки")],
         ],
         resize_keyboard=True,
     )

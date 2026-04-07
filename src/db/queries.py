@@ -664,6 +664,76 @@ async def get_expense_data(user_id: int, project_id: int | None = None) -> list[
     return [dict(r) for r in rows]
 
 
+async def get_weekly_finance_summary(project_id: int, weeks: int = 8) -> list[dict]:
+    """Расходы и доходы по неделям за последние N недель."""
+    rows = await get_pool().fetch(
+        """SELECT
+             date_trunc('week', timestamp)::date AS week_start,
+             transaction_type,
+             SUM(amount) AS total
+           FROM finances
+           WHERE project_id = $1
+             AND timestamp >= NOW() - make_interval(weeks => $2)
+           GROUP BY week_start, transaction_type
+           ORDER BY week_start""",
+        project_id, weeks,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_monthly_mood_data(user_id: int, year: int, month: int) -> list[dict]:
+    """Настроения за указанный месяц для психологического отчёта."""
+    rows = await get_pool().fetch(
+        """SELECT
+             timestamp::date AS day,
+             (json_data->>'score')::int AS score
+           FROM events
+           WHERE user_id = $1
+             AND event_type = 'mood'
+             AND EXTRACT(YEAR FROM timestamp) = $2
+             AND EXTRACT(MONTH FROM timestamp) = $3
+           ORDER BY timestamp""",
+        user_id, year, month,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_monthly_diary_entries(user_id: int, year: int, month: int) -> list[dict]:
+    """Дневниковые записи за месяц."""
+    rows = await get_pool().fetch(
+        """SELECT timestamp, raw_text
+           FROM events
+           WHERE user_id = $1
+             AND bot_source = 'psychology'
+             AND event_type = 'diary'
+             AND EXTRACT(YEAR FROM timestamp) = $2
+             AND EXTRACT(MONTH FROM timestamp) = $3
+           ORDER BY timestamp""",
+        user_id, year, month,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_monthly_habit_stats(user_id: int, year: int, month: int) -> list[dict]:
+    """Статистика привычек за месяц: сколько раз отмечено."""
+    rows = await get_pool().fetch(
+        """SELECT
+             g.title,
+             COUNT(CASE WHEN json_data->>'status' = 'done' THEN 1 END) AS done_count,
+             COUNT(*) AS total_count
+           FROM events e
+           JOIN goals g ON g.id = (e.json_data->>'goal_id')::int
+           WHERE e.user_id = $1
+             AND e.event_type = 'habit_check'
+             AND EXTRACT(YEAR FROM e.timestamp) = $2
+             AND EXTRACT(MONTH FROM e.timestamp) = $3
+           GROUP BY g.title
+           ORDER BY done_count DESC""",
+        user_id, year, month,
+    )
+    return [dict(r) for r in rows]
+
+
 # === Tasks (Планировщик) ===
 
 def _parse_date(val: str | date_type | None) -> date_type | None:

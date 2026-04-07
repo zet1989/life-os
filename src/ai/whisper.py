@@ -19,8 +19,8 @@ _model: WhisperModel | None = None
 def _get_model() -> WhisperModel:
     global _model
     if _model is None:
-        logger.info("whisper_loading_model", model="medium")
-        _model = WhisperModel("medium", device="cpu", compute_type="int8")
+        logger.info("whisper_loading_model", model="large-v3")
+        _model = WhisperModel("large-v3", device="cpu", compute_type="int8")
         logger.info("whisper_model_ready")
     return _model
 
@@ -50,7 +50,7 @@ async def transcribe_voice(
     await log_api_cost(
         user_id=user_id,
         bot_source=bot_source,
-        model="whisper-medium-local",
+        model="whisper-large-v3-local",
         tokens_in=duration,
         tokens_out=0,
         task_type="transcription",

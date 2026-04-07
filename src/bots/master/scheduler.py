@@ -210,6 +210,15 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Мониторинг здоровья сервиса — каждые 5 минут
+    scheduler.add_job(
+        check_service_health,
+        trigger=IntervalTrigger(minutes=5),
+        args=[bot],
+        id="service_health_check",
+        replace_existing=True,
+    )
+
     return scheduler
 
 
@@ -523,3 +532,69 @@ async def generate_weekly_obsidian_note() -> None:
             logger.info("weekly_obsidian_note_generated", user_id=user_id)
     except Exception:
         logger.exception("weekly_obsidian_note_failed")
+
+
+# === Мониторинг здоровья сервиса ===
+
+# Состояние: не слать алерт каждые 5 минут, а только при изменении
+_last_health_ok: bool = True
+
+
+async def check_service_health(bot: Bot) -> None:
+    """Проверить здоровье сервиса и послать алерт при проблемах."""
+    global _last_health_ok
+
+    issues: list[str] = []
+
+    # 1. Проверка PostgreSQL
+    try:
+        from src.db.postgres import get_pool
+        result = await get_pool().fetchval("SELECT 1")
+        if result != 1:
+            issues.append("❌ PostgreSQL: запрос вернул некорректный результат")
+    except Exception as e:
+        issues.append(f"❌ PostgreSQL: {str(e)[:100]}")
+
+    # 2. Проверка Redis
+    try:
+        from src.config import settings
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(settings.redis_url)
+        pong = await r.ping()
+        await r.aclose()
+        if not pong:
+            issues.append("❌ Redis: не отвечает на PING")
+    except Exception as e:
+        issues.append(f"❌ Redis: {str(e)[:100]}")
+
+    # 3. Проверка дискового пространства
+    try:
+        import shutil
+        usage = shutil.disk_usage("/")
+        free_gb = usage.free / (1024 ** 3)
+        if free_gb < 1.0:
+            issues.append(f"⚠️ Диск: осталось {free_gb:.1f} GB свободно")
+    except Exception:
+        pass  # Не критично
+
+    if issues:
+        if _last_health_ok:  # Переход ok → fail: послать алерт
+            _last_health_ok = False
+            try:
+                admins = await get_admin_users()
+                text = "🚨 <b>АЛЕРТ: проблемы с сервисом</b>\n\n" + "\n".join(issues)
+                for admin in admins:
+                    await bot.send_message(admin["user_id"], text)
+                logger.warning("service_health_alert_sent", issues=issues)
+            except Exception:
+                logger.exception("service_health_alert_send_failed")
+    else:
+        if not _last_health_ok:  # Переход fail → ok: послать восстановление
+            _last_health_ok = True
+            try:
+                admins = await get_admin_users()
+                for admin in admins:
+                    await bot.send_message(admin["user_id"], "✅ <b>Сервис восстановлен</b>\n\nВсе компоненты работают нормально.")
+                logger.info("service_health_recovered")
+            except Exception:
+                logger.exception("service_health_recovery_send_failed")

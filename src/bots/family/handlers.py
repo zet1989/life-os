@@ -159,6 +159,49 @@ async def mode_settings(message: Message, db_user: dict) -> None:
     )
 
 
+# === 📉 Графики ===
+
+@router.message(F.text == "📉 Графики")
+async def mode_charts(message: Message, db_user: dict) -> None:
+    from src.utils.charts import balance_trend_chart, expense_categories_pie, weekly_expense_chart
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.CHARTS)
+    projects = await _ensure_family_project(user_id)
+    project_id = projects[0]["project_id"]
+
+    processing = await message.answer("📉 Генерирую графики...")
+
+    charts_sent = 0
+
+    # 1. Расходы по неделям
+    chart_path = await weekly_expense_chart(project_id)
+    if chart_path:
+        await message.answer_photo(FSInputFile(str(chart_path)), caption="📊 Расходы и доходы по неделям")
+        chart_path.unlink(missing_ok=True)
+        charts_sent += 1
+
+    # 2. Тренд баланса
+    chart_path = await balance_trend_chart(user_id, project_id)
+    if chart_path:
+        await message.answer_photo(FSInputFile(str(chart_path)), caption="📈 Тренд баланса")
+        chart_path.unlink(missing_ok=True)
+        charts_sent += 1
+
+    # 3. Расходы по категориям (pie)
+    chart_path = await expense_categories_pie(user_id, project_id)
+    if chart_path:
+        await message.answer_photo(FSInputFile(str(chart_path)), caption="🥧 Расходы по категориям")
+        chart_path.unlink(missing_ok=True)
+        charts_sent += 1
+
+    if charts_sent == 0:
+        await processing.edit_text("📉 Недостаточно данных для графиков. Добавьте расходы и доходы.")
+    else:
+        await processing.delete()
+
+
+
 # === /last — последние транзакции ===
 
 @router.message(Command("last"))
@@ -606,7 +649,7 @@ async def handle_text(message: Message, bot: Bot, db_user: dict) -> None:
 async def _process_input(message: Message, user_id: int, text: str) -> None:
     mode = get_user_mode(user_id)
 
-    if mode in (Mode.SETTINGS, Mode.REPORT, Mode.CATEGORIES):
+    if mode in (Mode.SETTINGS, Mode.REPORT, Mode.CATEGORIES, Mode.CHARTS):
         return
 
     transaction_type = "expense" if mode == Mode.EXPENSE else "income"

@@ -15,7 +15,7 @@ import matplotlib.dates as mdates
 
 import structlog
 
-from src.db.queries import get_active_goals, get_expense_data, get_finance_data
+from src.db.queries import get_active_goals, get_expense_data, get_finance_data, get_weekly_finance_summary
 
 logger = structlog.get_logger()
 
@@ -126,6 +126,91 @@ async def expense_categories_pie(user_id: int, project_id: int | None = None) ->
     plt.tight_layout()
 
     tmp = tempfile.NamedTemporaryFile(suffix=".png", prefix="expense-pie-", delete=False)
+    fig.savefig(tmp.name, dpi=150)
+    plt.close(fig)
+
+    return Path(tmp.name)
+
+
+async def weekly_expense_chart(project_id: int) -> Path | None:
+    """Столбчатая диаграмма расходов по неделям (8 недель)."""
+    rows = await get_weekly_finance_summary(project_id, weeks=8)
+    if not rows:
+        return None
+
+    weekly_expense: dict[str, float] = defaultdict(float)
+    weekly_income: dict[str, float] = defaultdict(float)
+
+    for row in rows:
+        week = str(row["week_start"])
+        if row["transaction_type"] == "expense":
+            weekly_expense[week] += float(row["total"])
+        else:
+            weekly_income[week] += float(row["total"])
+
+    all_weeks = sorted(set(weekly_expense.keys()) | set(weekly_income.keys()))
+    if not all_weeks:
+        return None
+
+    dates = [datetime.strptime(w, "%Y-%m-%d") for w in all_weeks]
+    expenses = [weekly_expense.get(w, 0) for w in all_weeks]
+    incomes = [weekly_income.get(w, 0) for w in all_weeks]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    width = 2.5
+    ax.bar([d.toordinal() - width / 2 for d in dates], incomes, width=width, color="#2ecc71", alpha=0.85, label="Доход")
+    ax.bar([d.toordinal() + width / 2 for d in dates], expenses, width=width, color="#e74c3c", alpha=0.85, label="Расход")
+    ax.set_xticks([d.toordinal() for d in dates])
+    ax.set_xticklabels([d.strftime("%d.%m") for d in dates], rotation=45)
+    ax.set_title("Расходы и доходы по неделям", fontsize=14)
+    ax.set_ylabel("₽")
+    ax.legend()
+    plt.tight_layout()
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", prefix="weekly-finance-", delete=False)
+    fig.savefig(tmp.name, dpi=150)
+    plt.close(fig)
+
+    return Path(tmp.name)
+
+
+async def balance_trend_chart(user_id: int, project_id: int | None = None) -> Path | None:
+    """Линейный график накопительного баланса (доход - расход) по дням."""
+    rows = await get_finance_data(user_id, project_id)
+    if not rows:
+        return None
+
+    daily_balance: dict[str, float] = defaultdict(float)
+
+    for row in rows:
+        day = str(row["timestamp"])[:10]
+        amount = float(row["amount"])
+        if row["transaction_type"] == "income":
+            daily_balance[day] += amount
+        else:
+            daily_balance[day] -= amount
+
+    all_days = sorted(daily_balance.keys())
+    dates = [datetime.strptime(d, "%Y-%m-%d") for d in all_days]
+
+    # Накопительный баланс
+    cumulative = []
+    running = 0.0
+    for d in all_days:
+        running += daily_balance[d]
+        cumulative.append(running)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(dates, cumulative, color="#3498db", linewidth=2, marker="o", markersize=3)
+    ax.fill_between(dates, cumulative, alpha=0.15, color="#3498db")
+    ax.axhline(y=0, color="gray", linewidth=0.5, linestyle="--")
+    ax.set_title("Тренд баланса", fontsize=14)
+    ax.set_ylabel("₽")
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
+    fig.autofmt_xdate()
+    plt.tight_layout()
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", prefix="balance-trend-", delete=False)
     fig.savefig(tmp.name, dpi=150)
     plt.close(fig)
 

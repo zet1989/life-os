@@ -103,7 +103,8 @@ def _collect_bots() -> list[dict]:
 
     if settings.bot_token_psychology:
         from src.bots.psychology.handlers import router as psychology_router
-        bots_cfg.append({"token": settings.bot_token_psychology, "name": "psychology", "router": psychology_router, "scheduler": None})
+        from src.bots.psychology.scheduler import setup_scheduler as psychology_scheduler
+        bots_cfg.append({"token": settings.bot_token_psychology, "name": "psychology", "router": psychology_router, "scheduler": psychology_scheduler})
 
     if settings.bot_token_master:
         from src.bots.master.handlers import router as master_router
