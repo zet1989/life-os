@@ -17,14 +17,18 @@ jobs:
           script: |
             cd /opt/life-os
             git pull origin main
-            # Open Syncthing ports if ufw is active
+            # Open Syncthing ports (ufw + iptables fallback)
             if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
               ufw allow 8384/tcp comment 'Syncthing Web UI' || true
-              ufw allow 22000/tcp comment 'Syncthing Sync' || true
-              ufw allow 22000/udp comment 'Syncthing Sync' || true
+              ufw allow 22000 comment 'Syncthing Sync' || true
               ufw allow 21027/udp comment 'Syncthing Discovery' || true
             fi
+            iptables -I INPUT -p tcp --dport 8384 -j ACCEPT 2>/dev/null || true
+            iptables -I INPUT -p tcp --dport 22000 -j ACCEPT 2>/dev/null || true
+            iptables -I INPUT -p udp --dport 22000 -j ACCEPT 2>/dev/null || true
+            iptables -I INPUT -p udp --dport 21027 -j ACCEPT 2>/dev/null || true
             docker compose build --no-cache bot
+            docker compose up -d --force-recreate syncthing
             docker compose up -d
             echo '=== Running migrations ==='
             for f in sql/0*.sql; do
@@ -32,6 +36,7 @@ jobs:
               cat "$f" | docker compose exec -T postgres psql -U lifeos -d lifeos 2>&1 || true
             done
             echo '=== Syncthing status ==='
-            docker compose ps syncthing 2>&1 || true
-            echo '=== Logs ==='
+            docker compose ps syncthing
+            docker compose logs --tail=10 syncthing 2>&1 || true
+            echo '=== Bot logs ==='
             docker compose logs --tail=20 bot
