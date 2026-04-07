@@ -62,9 +62,11 @@ services:
   syncthing:
     image: syncthing/syncthing:latest
     restart: unless-stopped
+    hostname: life-os-syncthing
     environment:
       - PUID=1000
       - PGID=1000
+      - STGUIADDRESS=0.0.0.0:8384
     volumes:
       - syncthing_config:/var/syncthing/config
       - obsidian_vault:/var/syncthing/data/LifeOS
