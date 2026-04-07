@@ -848,6 +848,9 @@ async def cmd_kanban(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     board = await get_kanban_tasks(user_id)
 
+    # Синхронизировать Kanban → Obsidian
+    await obsidian.generate_kanban_board(board)
+
     text = "📊 <b>Kanban-доска</b>\n"
 
     for status, label in KANBAN_COLUMNS.items():
@@ -1491,6 +1494,10 @@ async def _parse_and_create_task(message: Message, user_id: int, text: str) -> N
             reply_markup=main_keyboard(),
         )
         set_user_mode(user_id, Mode.TASKS)
+
+        # Обновить Kanban-доску в Obsidian
+        board = await get_kanban_tasks(user_id)
+        await obsidian.generate_kanban_board(board)
     except Exception as exc:
         logger.error("task_create_error", error=str(exc), user_id=user_id)
         await safe_answer(message, f"❌ Ошибка создания задачи: {exc}")

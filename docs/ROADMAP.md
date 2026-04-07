@@ -81,6 +81,7 @@
 ### Obsidian
 
 - [x] Автоматические Weekly Notes (сводка недели в 04-Daily/)
+- [x] Kanban-доска в Obsidian (drag & drop, двусторонняя синхронизация с БД)
 - [ ] Mind Map из идей (экспорт графа связей идей)
 - [ ] Статистика Vault (кол-во заметок, связей, активность)
 - [x] Шаблон Meeting Notes (из Mentor → 05-Projects/)

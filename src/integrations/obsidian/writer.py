@@ -599,6 +599,89 @@ class ObsidianWriter:
         path.write_text("\n".join(lines), encoding="utf-8")
         logger.info("obsidian.weekly_note", file=str(path), week=f"{year}-W{week:02d}")
 
+    # ---------------------------------------------------------------
+    # Kanban Board (плагин Obsidian Kanban)
+    # ---------------------------------------------------------------
+
+    async def generate_kanban_board(self, kanban_data: dict[str, list[dict]]) -> None:
+        """Перегенерировать 03-Dashboards/Kanban.md в формате плагина Obsidian Kanban."""
+        if not self.enabled:
+            return
+
+        path = self.vault / "03-Dashboards" / "Kanban.md"
+        self._ensure_dir(path)
+
+        now = datetime.now(MSK).strftime("%Y-%m-%d %H:%M")
+
+        COLUMNS = [
+            ("backlog", "📥 Backlog"),
+            ("todo", "📋 Todo"),
+            ("in_progress", "🔄 In Progress"),
+            ("done", "✅ Done"),
+        ]
+
+        lines: list[str] = [
+            "---",
+            "",
+            "kanban-plugin: basic",
+            "",
+            "---",
+            "",
+        ]
+
+        for col_key, col_title in COLUMNS:
+            lines.append(f"## {col_title}")
+            lines.append("")
+
+            tasks = kanban_data.get(col_key, [])
+            for t in tasks:
+                is_done = t.get("is_done", False)
+                checkbox = "[x]" if is_done else "[ ]"
+                text = t.get("task_text", "")
+                task_id = t.get("id", "")
+
+                # Метаданные в строку задачи
+                parts = [f"- {checkbox} {text}"]
+
+                # Приоритет
+                prio = t.get("priority", "normal")
+                prio_emoji = {"urgent": "🔴", "high": "🟠", "normal": "", "low": "🔵"}.get(prio, "")
+                if prio_emoji:
+                    parts[0] = f"- {checkbox} {prio_emoji} {text}"
+
+                # Дедлайн
+                due = t.get("due_date")
+                if due:
+                    due_str = due.strftime("%Y-%m-%d") if hasattr(due, "strftime") else str(due)
+                    parts[0] += f" 📅 {due_str}"
+
+                # Время
+                due_time = t.get("due_time")
+                if due_time:
+                    time_str = due_time.strftime("%H:%M") if hasattr(due_time, "strftime") else str(due_time)
+                    parts[0] += f" ⏰ {time_str}"
+
+                # Цель
+                goal_title = t.get("goal_title")
+                if goal_title:
+                    parts[0] += f" [🎯 {goal_title}]"
+
+                # Тэги
+                tags = t.get("tags") or []
+                if tags:
+                    parts[0] += " " + " ".join(f"#{tg}" for tg in tags)
+
+                # ID задачи в комментарии (для обратной синхронизации)
+                parts[0] += f" ^task-{task_id}"
+
+                lines.append(parts[0])
+
+            lines.append("")
+            lines.append("")
+
+        path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("obsidian.kanban_generated", tasks=sum(len(v) for v in kanban_data.values()))
+
 
 # Синглтон
 obsidian = ObsidianWriter()

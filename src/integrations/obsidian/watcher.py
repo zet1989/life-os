@@ -58,6 +58,12 @@ async def _process_file(filepath: str, user_id: int) -> None:
         return
 
     relative = str(path.relative_to(vault))
+
+    # Kanban board — отдельная обработка
+    if relative.replace("\\", "/") == "03-Dashboards/Kanban.md":
+        await _process_kanban_changes(content, user_id)
+        return
+
     tasks = parse_tasks(content, source_file=relative)
 
     for task in tasks:
@@ -77,6 +83,62 @@ async def _process_file(filepath: str, user_id: int) -> None:
     top_folder = relative.split("/")[0] if "/" in relative else relative.split("\\")[0] if "\\" in relative else ""
     if top_folder in _RAG_FOLDERS and len(content.strip()) > 50:
         await _index_note_for_rag(user_id, relative, content)
+
+
+# Маппинг заголовков Kanban → статусы в БД
+_KANBAN_HEADER_MAP = {
+    "backlog": "backlog",
+    "todo": "todo",
+    "in progress": "in_progress",
+    "in_progress": "in_progress",
+    "done": "done",
+}
+
+
+async def _process_kanban_changes(content: str, user_id: int) -> None:
+    """Парсить Kanban.md и синхронизировать kanban_status и is_done в БД."""
+    import re
+    from src.db.queries import update_kanban_status, complete_task, uncomplete_task
+
+    # Парсим колонки: ## Заголовок → задачи
+    current_status: str | None = None
+    task_re = re.compile(r"^-\s+\[([ xX])\].*?\^task-(\d+)\s*$")
+    header_re = re.compile(r"^##\s+(.+)$")
+
+    for line in content.split("\n"):
+        line = line.strip()
+
+        hm = header_re.match(line)
+        if hm:
+            header_text = hm.group(1).strip().lower()
+            # Убираем эмодзи в начале
+            header_clean = re.sub(r"^[^\w]+", "", header_text).strip()
+            current_status = _KANBAN_HEADER_MAP.get(header_clean)
+            continue
+
+        if current_status is None:
+            continue
+
+        tm = task_re.match(line)
+        if not tm:
+            continue
+
+        checkbox = tm.group(1)
+        task_id = int(tm.group(2))
+        is_done_in_md = checkbox.lower() == "x"
+
+        # Обновляем kanban_status
+        await update_kanban_status(task_id, user_id, current_status)
+
+        # Синхронизируем is_done
+        if current_status == "done" and not is_done_in_md:
+            # Перемещено в done → отмечаем выполненной
+            await complete_task(task_id, user_id)
+        elif is_done_in_md and current_status != "done":
+            # Чекбокс отмечен, но не в done → снимаем
+            await uncomplete_task(task_id, user_id)
+
+    logger.info("obsidian.kanban_synced", user_id=user_id)
 
 
 async def _index_note_for_rag(user_id: int, relative_path: str, content: str) -> None:
