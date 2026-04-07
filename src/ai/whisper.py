@@ -19,8 +19,8 @@ _model: WhisperModel | None = None
 def _get_model() -> WhisperModel:
     global _model
     if _model is None:
-        logger.info("whisper_loading_model", model="base")
-        _model = WhisperModel("base", device="cpu", compute_type="int8")
+        logger.info("whisper_loading_model", model="medium")
+        _model = WhisperModel("medium", device="cpu", compute_type="int8")
         logger.info("whisper_model_ready")
     return _model
 
@@ -50,7 +50,7 @@ async def transcribe_voice(
     await log_api_cost(
         user_id=user_id,
         bot_source=bot_source,
-        model="whisper-base-local",
+        model="whisper-medium-local",
         tokens_in=duration,
         tokens_out=0,
         task_type="transcription",
@@ -63,5 +63,5 @@ async def transcribe_voice(
 def _transcribe_sync(audio_path: str) -> str:
     """Синхронная транскрипция (вызывается в executor)."""
     model = _get_model()
-    segments, _info = model.transcribe(audio_path, language="ru", beam_size=3)
+    segments, _info = model.transcribe(audio_path, language="ru", beam_size=5)
     return " ".join(seg.text.strip() for seg in segments).strip()
