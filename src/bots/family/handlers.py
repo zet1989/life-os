@@ -97,6 +97,22 @@ async def cmd_start(message: Message, db_user: dict) -> None:
     )
 
 
+# === /voice — голосовые ответы AI ===
+
+@router.message(Command("voice"))
+async def cmd_voice_toggle(message: Message, db_user: dict) -> None:
+    from src.ai.tts import toggle_voice_mode
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    enabled = toggle_voice_mode(user_id)
+    emoji = "🔊" if enabled else "🔇"
+    state = "включены" if enabled else "выключены"
+    await message.answer(
+        f"{emoji} Голосовые ответы <b>{state}</b>.\n/voice — переключить.",
+        reply_markup=main_keyboard(),
+    )
+
+
 # === Reply-клавиатура ===
 
 @router.message(F.text == "💰 Расход")

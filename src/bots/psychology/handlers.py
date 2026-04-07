@@ -17,7 +17,7 @@ from src.ai.rag import rag_answer, store_event_embedding
 from src.ai.router import chat
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
-from src.utils.telegram import safe_answer
+from src.utils.telegram import safe_answer, safe_answer_voice
 from src.db.queries import create_event, get_active_goals, get_cross_bot_summary, get_gratitude_today, get_life_profile, get_user, update_user_settings
 from src.bots.psychology.keyboard import (
     Mode,
@@ -149,6 +149,30 @@ async def cmd_start(message: Message, db_user: dict) -> None:
     )
 
 
+# === /voice — голосовые ответы AI ===
+
+@router.message(Command("voice"))
+async def cmd_voice_toggle(message: Message, db_user: dict) -> None:
+    """Переключить режим голосовых ответов."""
+    from src.ai.tts import toggle_voice_mode
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    enabled = toggle_voice_mode(user_id)
+    if enabled:
+        await message.answer(
+            "🔊 <b>Голосовые ответы включены!</b>\n\n"
+            "Теперь AI будет отвечать текстом + голосом.\n"
+            "Повтори /voice чтобы выключить.",
+            reply_markup=main_keyboard(),
+        )
+    else:
+        await message.answer(
+            "🔇 Голосовые ответы выключены.\n"
+            "Повтори /voice чтобы включить.",
+            reply_markup=main_keyboard(),
+        )
+
+
 # === Reply-клавиатура: режимы ===
 
 @router.message(F.text == "📝 Дневник")
@@ -220,6 +244,20 @@ async def mode_retro(message: Message, db_user: dict) -> None:
 
     await processing.edit_text(f"🔮 <b>Ретроспектива</b>\n\n{result}")
     await save_assistant_reply(user_id, BOT_SOURCE, result)
+
+    # Голосовой ответ если включён
+    from src.ai.tts import is_voice_mode, text_to_voice
+
+    if is_voice_mode(user_id):
+        voice_path = await text_to_voice(result)
+        if voice_path:
+            try:
+                from aiogram.types import FSInputFile
+                await message.answer_voice(FSInputFile(str(voice_path)))
+            except Exception:
+                logger.exception("voice_retro_failed")
+            finally:
+                voice_path.unlink(missing_ok=True)
 
 
 @router.message(F.text == "➕ Привычка")
@@ -647,7 +685,7 @@ async def _process_diary(message: Message, user_id: int, text: str) -> None:
         bot_source=BOT_SOURCE,
     )
 
-    await safe_answer(message, reply, reply_markup=main_keyboard())
+    await safe_answer_voice(message, reply, user_id, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, reply)
 
 

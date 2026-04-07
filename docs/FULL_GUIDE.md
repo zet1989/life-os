@@ -1197,6 +1197,7 @@ LifeOS/
 | Фото (еда, чеки, планы) | gpt-4o (vision) | ~$2.50 in / $10.00 out |
 | Голос → текст | faster-whisper large-v3 (локально) | бесплатно |
 | RAG-эмбеддинги | text-embedding-3-small | ~$0.02/1M токенов |
+| Текст → голос | edge-tts (Microsoft) | бесплатно |
 
 ### Бюджеты
 
@@ -1257,6 +1258,9 @@ ssh root@159.194.218.101 "cd /opt/life-os && git pull && docker compose build --
 ## 16. FAQ — Частые вопросы
 
 ### Общие
+
+**Q: Как включить голосовые ответы AI?**
+A: Отправь `/voice` в любом боте (Psychology, Health, Business, Master, Family). Бот начнёт отвечать текстом + голосовым сообщением. Повтори `/voice` чтобы выключить. Голос: Светлана (ru-RU-SvetlanaNeural, Microsoft Edge TTS, бесплатно).
 
 **Q: Бот не отвечает — что делать?**
 A: Проверь `/status` в Master-боте. Если не помогает — `ssh root@159.194.218.101 "cd /opt/life-os && docker compose logs --tail=50 bot"`.

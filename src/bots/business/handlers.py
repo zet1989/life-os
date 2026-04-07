@@ -11,7 +11,7 @@ from src.ai.rag import rag_answer, store_event_embedding
 from src.ai.router import chat
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
-from src.utils.telegram import safe_answer
+from src.utils.telegram import safe_answer, safe_answer_voice
 from src.db.queries import (
     archive_project,
     create_event,
@@ -107,6 +107,22 @@ async def cmd_archive_project(message: Message, db_user: dict) -> None:
     await message.answer(
         "Выбери проект для архивации:",
         reply_markup=projects_inline(projects, action="archive"),
+    )
+
+
+# === /voice — голосовые ответы AI ===
+
+@router.message(Command("voice"))
+async def cmd_voice_toggle(message: Message, db_user: dict) -> None:
+    from src.ai.tts import toggle_voice_mode
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    enabled = toggle_voice_mode(user_id)
+    emoji = "🔊" if enabled else "🔇"
+    state = "включены" if enabled else "выключены"
+    await message.answer(
+        f"{emoji} Голосовые ответы <b>{state}</b>.\n/voice — переключить.",
+        reply_markup=main_keyboard(),
     )
 
 
@@ -419,7 +435,7 @@ async def _attach_to_project_direct(
         evts = await get_project_events(project_id, limit=10)
         await obsidian.update_project_readme(proj, fin, evts)
 
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    await safe_answer_voice(message, result, user_id, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -436,7 +452,7 @@ async def _process_question(message: Message, user_id: int, query: str) -> None:
         top_k=5,
         bot_source=BOT_SOURCE,
     )
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    await safe_answer_voice(message, result, user_id, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 

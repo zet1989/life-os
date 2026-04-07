@@ -14,7 +14,7 @@ from src.ai.router import chat
 from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
-from src.utils.telegram import safe_answer, safe_edit
+from src.utils.telegram import safe_answer, safe_answer_voice, safe_edit
 from src.db.queries import create_event, get_active_goals, get_today_meals, get_today_water, get_today_workouts, get_user, get_weight_history, update_user_settings
 from src.bots.health.prompts import (
     DOCTOR_PHOTO_PROMPT,
@@ -115,6 +115,22 @@ async def cmd_start(message: Message, db_user: dict) -> None:
         f"🏋️ Тренировка — лог и анализ\n"
         f"🩺 Доктор — медицинские вопросы\n"
         f"📋 Мой профиль — расскажи о себе",
+        reply_markup=main_keyboard(),
+    )
+
+
+# === /voice — голосовые ответы AI ===
+
+@router.message(Command("voice"))
+async def cmd_voice_toggle(message: Message, db_user: dict) -> None:
+    from src.ai.tts import toggle_voice_mode
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    enabled = toggle_voice_mode(user_id)
+    emoji = "🔊" if enabled else "🔇"
+    state = "включены" if enabled else "выключены"
+    await message.answer(
+        f"{emoji} Голосовые ответы <b>{state}</b>.\n/voice — переключить.",
         reply_markup=main_keyboard(),
     )
 
@@ -787,7 +803,7 @@ async def _process_doctor(message: Message, user_id: int, text: str) -> None:
         user_id=user_id,
         bot_source=BOT_SOURCE,
     )
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    await safe_answer_voice(message, result, user_id, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -808,7 +824,7 @@ async def _process_doctor_photo(message: Message, bot: Bot, user_id: int) -> Non
     )
 
     await processing.delete()
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    await safe_answer_voice(message, result, user_id, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 

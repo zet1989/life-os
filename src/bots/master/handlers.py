@@ -21,7 +21,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from src.utils.telegram import safe_answer, safe_edit
+from src.utils.telegram import safe_answer, safe_answer_voice, safe_edit
 
 from src.ai.rag import rag_answer, search, store_event_embedding
 from src.ai.router import chat, get_model_config
@@ -159,6 +159,22 @@ async def cmd_export(message: Message, db_user: dict) -> None:
     # Удаляем временный файл
     path.unlink(missing_ok=True)
     await processing.delete()
+
+
+# === /voice — голосовые ответы AI ===
+
+@router.message(Command("voice"))
+async def cmd_voice_toggle(message: Message, db_user: dict) -> None:
+    from src.ai.tts import toggle_voice_mode
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    enabled = toggle_voice_mode(user_id)
+    emoji = "🔊" if enabled else "🔇"
+    state = "включены" if enabled else "выключены"
+    await message.answer(
+        f"{emoji} Голосовые ответы <b>{state}</b>.\n/voice — переключить.",
+        reply_markup=main_keyboard(),
+    )
 
 
 # === /status ===
@@ -1381,7 +1397,7 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
         bot_source=BOT_SOURCE,
     )
 
-    await safe_answer(message, result, reply_markup=main_keyboard())
+    await safe_answer_voice(message, result, user_id, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
