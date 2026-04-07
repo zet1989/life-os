@@ -29,6 +29,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./sql/001_init_schema.sql:/docker-entrypoint-initdb.d/001_init_schema.sql:ro
+      - ./sql:/migrations:ro
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:

@@ -19,4 +19,9 @@ jobs:
             git pull origin main
             docker compose build --no-cache bot
             docker compose up -d
+            echo '=== Running migrations ==='
+            for f in sql/0*.sql; do
+              docker compose exec -T postgres psql -U lifeos -d lifeos -f /migrations/$(basename $f) 2>&1 || true
+            done
+            echo '=== Logs ==='
             docker compose logs --tail=20 bot
