@@ -1,6 +1,7 @@
 .env
 .deploy-secrets
 deploy.ps1
+DEPLOY_GUIDE.md
 __pycache__/
 *.pyc
 .venv/
