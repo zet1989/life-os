@@ -2,6 +2,9 @@
 
 Цепочка: user_id → есть в users? → is_active? → есть права на этого бота?
 Незнакомцам бот не отвечает (молчит).
+
+В unified-режиме (единый бот-хаб) проверка секций происходит
+в hub/handlers.py при переключении секции, а не здесь.
 """
 
 from typing import Any, Awaitable, Callable
@@ -45,7 +48,12 @@ class ACLMiddleware(BaseMiddleware):
             logger.warning("acl_denied", user_id=user_id, reason="unknown_or_inactive")
             return  # молчим
 
-        # Проверяем доступ к конкретному боту
+        # В unified-режиме проверка секций идёт при переключении в hub/handlers.py
+        if self.bot_name == "unified":
+            data["db_user"] = user
+            return await handler(event, data)
+
+        # Проверяем доступ к конкретному боту (устаревший мульти-бот режим)
         permissions = user.get("permissions") or {}
         allowed_bots: list[str] = permissions.get("bots", [])
 

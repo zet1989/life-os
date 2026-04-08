@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     )
 
     # --- Telegram Bot Tokens ---
-    bot_token_health: str
+    bot_token_health: str = ""
     bot_token_assets: str = ""
     bot_token_business: str = ""
     bot_token_partner: str = ""
@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     bot_token_family: str = ""
     bot_token_psychology: str = ""
     bot_token_master: str = ""
+
+    # --- Unified Bot (единый бот-хаб) ---
+    bot_token_unified: str = ""     # если задан — все секции в одном боте
 
     # --- PostgreSQL ---
     database_url: str = "postgresql://lifeos:lifeos@postgres:5432/lifeos"

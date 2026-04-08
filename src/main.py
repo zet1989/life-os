@@ -1,8 +1,12 @@
-"""Точка входа — мульти-бот архитектура.
+"""Точка входа — мульти-бот / unified-бот архитектура.
 
-Режим определяется настройкой USE_WEBHOOK:
-- False (dev): Long Polling через asyncio.gather.
-- True (prod): Webhooks через aiohttp на одном порту, роутинг по path.
+Режимы:
+1. Unified (bot_token_unified задан): один бот, все секции через меню.
+2. Multi-bot (legacy): отдельный бот на каждый токен.
+
+Транспорт определяется USE_WEBHOOK:
+- False (dev): Long Polling.
+- True (prod): Webhooks через aiohttp.
 """
 
 import asyncio
@@ -10,7 +14,7 @@ import logging
 import signal
 
 import structlog
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
@@ -25,6 +29,154 @@ structlog.configure(
 )
 logger = structlog.get_logger()
 
+
+# ─────────────────────────────────────────────────────────
+#  Unified mode — единый бот-хаб
+# ─────────────────────────────────────────────────────────
+
+def _collect_unified() -> dict:
+    """Собрать unified-бота: один токен, все секции через SectionFilter."""
+    from src.bots.hub.handlers import router as hub_router
+    from src.bots.hub.section_filter import SectionFilter
+
+    routers: list[Router] = [hub_router]  # Hub первый — ловит /start, 🏠 Меню
+    scheduler_factories = []
+
+    # Health
+    from src.bots.health.handlers import router as health_router
+    from src.bots.health.scheduler import setup_scheduler as health_scheduler
+    health_router.message.filter(SectionFilter("health"))
+    routers.append(health_router)
+    scheduler_factories.append(health_scheduler)
+
+    # Assets
+    from src.bots.assets.handlers import router as assets_router
+    from src.bots.assets.scheduler import setup_scheduler as assets_scheduler
+    assets_router.message.filter(SectionFilter("assets"))
+    routers.append(assets_router)
+    scheduler_factories.append(assets_scheduler)
+
+    # Business
+    from src.bots.business.handlers import router as business_router
+    business_router.message.filter(SectionFilter("business"))
+    routers.append(business_router)
+
+    # Partner
+    from src.bots.partner.handlers import router as partner_router
+    partner_router.message.filter(SectionFilter("partner"))
+    routers.append(partner_router)
+
+    # Mentor
+    from src.bots.mentor.handlers import router as mentor_router
+    mentor_router.message.filter(SectionFilter("mentor"))
+    routers.append(mentor_router)
+
+    # Family
+    from src.bots.family.handlers import router as family_router
+    family_router.message.filter(SectionFilter("family"))
+    routers.append(family_router)
+
+    # Psychology
+    from src.bots.psychology.handlers import router as psychology_router
+    from src.bots.psychology.scheduler import setup_scheduler as psychology_scheduler
+    psychology_router.message.filter(SectionFilter("psychology"))
+    routers.append(psychology_router)
+    scheduler_factories.append(psychology_scheduler)
+
+    # Master
+    from src.bots.master.handlers import router as master_router
+    from src.bots.master.scheduler import setup_scheduler as master_scheduler
+    master_router.message.filter(SectionFilter("master"))
+    routers.append(master_router)
+    scheduler_factories.append(master_scheduler)
+
+    return {
+        "token": settings.bot_token_unified,
+        "routers": routers,
+        "scheduler_factories": scheduler_factories,
+    }
+
+
+async def _run_unified_polling() -> None:
+    """Запуск единого бота в режиме Long Polling."""
+    cfg = _collect_unified()
+
+    bot = Bot(
+        token=cfg["token"],
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    dp = Dispatcher()
+    dp.update.middleware(ACLMiddleware(bot_name="unified"))
+
+    for r in cfg["routers"]:
+        dp.include_router(r)
+
+    schedulers = []
+    for factory in cfg["scheduler_factories"]:
+        sched = factory(bot)
+        sched.start()
+        schedulers.append(sched)
+
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("unified_polling_started", sections=len(cfg["routers"]) - 1)
+
+    try:
+        await dp.start_polling(bot)
+    finally:
+        for sched in schedulers:
+            sched.shutdown(wait=False)
+
+
+async def _run_unified_webhook(app, instances, schedulers) -> None:
+    """Настроить webhook для единого бота."""
+    from aiohttp import web
+
+    cfg = _collect_unified()
+
+    bot = Bot(
+        token=cfg["token"],
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    dp = Dispatcher()
+    dp.update.middleware(ACLMiddleware(bot_name="unified"))
+
+    for r in cfg["routers"]:
+        dp.include_router(r)
+
+    instances.append((bot, dp))
+
+    path = "/webhook/unified"
+
+    async def webhook_handler(request: web.Request) -> web.Response:
+        if settings.webhook_secret:
+            token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+            if token != settings.webhook_secret:
+                return web.Response(status=403)
+        update = await request.json()
+        from aiogram.types import Update
+        telegram_update = Update.model_validate(update, context={"bot": bot})
+        await dp.feed_update(bot=bot, update=telegram_update)
+        return web.Response(status=200)
+
+    app.router.add_post(path, webhook_handler)
+
+    for factory in cfg["scheduler_factories"]:
+        sched = factory(bot)
+        sched.start()
+        schedulers.append(sched)
+
+    webhook_url = f"{settings.webhook_host}{path}"
+    await bot.set_webhook(
+        url=webhook_url,
+        secret_token=settings.webhook_secret or None,
+        drop_pending_updates=True,
+    )
+    logger.info("unified_webhook_set", url=webhook_url, sections=len(cfg["routers"]) - 1)
+
+
+# ─────────────────────────────────────────────────────────
+#  Legacy multi-bot mode
+# ─────────────────────────────────────────────────────────
 
 async def _run_bot(
     token: str,
@@ -72,7 +224,7 @@ def _create_bot_dp(
 
 
 def _collect_bots() -> list[dict]:
-    """Собрать список активных ботов с их роутерами и scheduler'ами."""
+    """Собрать список активных ботов (legacy multi-bot mode)."""
     bots_cfg = []
 
     if settings.bot_token_health:
@@ -114,7 +266,9 @@ def _collect_bots() -> list[dict]:
     return bots_cfg
 
 
-# === Polling mode (разработка) ===
+# ─────────────────────────────────────────────────────────
+#  Entrypoints
+# ─────────────────────────────────────────────────────────
 
 async def _main_polling() -> None:
     await init_pool()
@@ -123,6 +277,16 @@ async def _main_polling() -> None:
     from src.integrations.obsidian.watcher import start_watcher
     await start_watcher(user_id=settings.admin_user_id)
 
+    # Unified mode: один бот, все секции
+    if settings.bot_token_unified:
+        logger.info("mode_unified", transport="polling")
+        try:
+            await _run_unified_polling()
+        finally:
+            await close_pool()
+        return
+
+    # Legacy multi-bot mode
     bots_cfg = _collect_bots()
     if not bots_cfg:
         logger.error("no_bots_configured")
@@ -145,8 +309,6 @@ async def _main_polling() -> None:
         await close_pool()
 
 
-# === Webhook mode (продакшен) ===
-
 async def _main_webhook() -> None:
     from aiohttp import web
 
@@ -156,52 +318,54 @@ async def _main_webhook() -> None:
     from src.integrations.obsidian.watcher import start_watcher
     await start_watcher(user_id=settings.admin_user_id)
 
-    bots_cfg = _collect_bots()
-    if not bots_cfg:
-        logger.error("no_bots_configured")
-        return
-
     app = web.Application()
     instances: list[tuple[Bot, Dispatcher]] = []
     schedulers = []
 
-    for cfg in bots_cfg:
-        bot, dp = _create_bot_dp(cfg["token"], cfg["name"], cfg["router"])
-        instances.append((bot, dp))
+    # Unified mode: один бот, все секции
+    if settings.bot_token_unified:
+        logger.info("mode_unified", transport="webhook")
+        await _run_unified_webhook(app, instances, schedulers)
+    else:
+        # Legacy multi-bot mode
+        bots_cfg = _collect_bots()
+        if not bots_cfg:
+            logger.error("no_bots_configured")
+            return
 
-        # Webhook path: /webhook/<bot_name>
-        path = f"/webhook/{cfg['name']}"
+        for cfg in bots_cfg:
+            bot, dp = _create_bot_dp(cfg["token"], cfg["name"], cfg["router"])
+            instances.append((bot, dp))
 
-        async def make_handler(b=bot, d=dp):
-            async def handler(request: web.Request) -> web.Response:
-                # Верификация секрета
-                if settings.webhook_secret:
-                    token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-                    if token != settings.webhook_secret:
-                        return web.Response(status=403)
-                update = await request.json()
-                from aiogram.types import Update
-                telegram_update = Update.model_validate(update, context={"bot": b})
-                await d.feed_update(bot=b, update=telegram_update)
-                return web.Response(status=200)
-            return handler
+            path = f"/webhook/{cfg['name']}"
 
-        app.router.add_post(path, await make_handler())
+            async def make_handler(b=bot, d=dp):
+                async def handler(request: web.Request) -> web.Response:
+                    if settings.webhook_secret:
+                        token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+                        if token != settings.webhook_secret:
+                            return web.Response(status=403)
+                    update = await request.json()
+                    from aiogram.types import Update
+                    telegram_update = Update.model_validate(update, context={"bot": b})
+                    await d.feed_update(bot=b, update=telegram_update)
+                    return web.Response(status=200)
+                return handler
 
-        # Scheduler
-        if cfg["scheduler"]:
-            sched = cfg["scheduler"](bot)
-            sched.start()
-            schedulers.append(sched)
+            app.router.add_post(path, await make_handler())
 
-        # Установить webhook
-        webhook_url = f"{settings.webhook_host}{path}"
-        await bot.set_webhook(
-            url=webhook_url,
-            secret_token=settings.webhook_secret or None,
-            drop_pending_updates=True,
-        )
-        logger.info("webhook_set", bot=cfg["name"], url=webhook_url)
+            if cfg["scheduler"]:
+                sched = cfg["scheduler"](bot)
+                sched.start()
+                schedulers.append(sched)
+
+            webhook_url = f"{settings.webhook_host}{path}"
+            await bot.set_webhook(
+                url=webhook_url,
+                secret_token=settings.webhook_secret or None,
+                drop_pending_updates=True,
+            )
+            logger.info("webhook_set", bot=cfg["name"], url=webhook_url)
 
     # Health-check эндпоинт
     async def health_check(request: web.Request) -> web.Response:
@@ -225,7 +389,8 @@ async def _main_webhook() -> None:
 
     app.on_shutdown.append(on_shutdown)
 
-    logger.info("all_bots_starting", count=len(instances), mode="webhook", port=settings.webhook_port)
+    bot_count = len(instances)
+    logger.info("all_bots_starting", count=bot_count, mode="webhook", port=settings.webhook_port)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", settings.webhook_port)

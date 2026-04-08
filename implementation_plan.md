@@ -57,8 +57,13 @@ life-os/
 │   │   │   └── ...
 │   │   ├── psychology/         # Этап 5: Психолог + Дневник
 │   │   │   └── ...
-│   │   └── master/             # Этап 6: Главный ментор
-│   │       └── ...
+│   │   ├── master/             # Этап 6: Главный ментор
+│   │   │   └── ...
+│   │   └── hub/                # Этап 11: Единый бот-хаб
+│   │       ├── __init__.py
+│   │       ├── keyboard.py     # Section enum, главное меню
+│   │       ├── handlers.py     # /start, переключение секций
+│   │       └── section_filter.py  # SectionFilter (BaseFilter)
 │   └── utils/
 │       ├── __init__.py
 │       ├── cost_tracker.py     # логирование расходов на API
@@ -313,6 +318,15 @@ CREATE INDEX idx_goals_user ON goals(user_id, status);
 - [x] **10.2** Telegram-интерфейс — кнопка «📋 Задачи», inline-управление, `/task`, `/week`, `/done`
 - [x] **10.3** Утренний брифинг (08:00), вечерний обзор (21:00), напоминания по минутам
 - [x] **10.4** Синхронизация Planner ↔ Obsidian
+
+### Фаза 11: Единый бот-хаб (Unified Bot) ✅
+- [x] **11.1** Hub-модуль — `Section` (StrEnum), главное меню 4×2, `SectionFilter` (BaseFilter)
+- [x] **11.2** Единый токен `BOT_TOKEN_UNIFIED` в config.py, все остальные токены необязательны
+- [x] **11.3** ACL — unified-режим: проверка is_active без bot_name, секции проверяются в hub
+- [x] **11.4** main.py — `_collect_unified()`, polling + webhook, hub-роутер с приоритетом
+- [x] **11.5** SectionFilter динамически на роутерах секций, catch-all в hub для текста без секции
+- [x] **11.6** Клавиатуры секций + кнопка «🏠 Меню» (динамически через hub)
+- [x] **11.7** Обратная совместимость — мульти-бот режим работает без `BOT_TOKEN_UNIFIED`
 
 ---
 
