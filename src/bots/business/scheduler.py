@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 import structlog
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -14,6 +15,24 @@ from src.db.queries import get_active_work_session
 logger = structlog.get_logger()
 
 MSK = ZoneInfo("Europe/Moscow")
+
+
+def _start_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="▶️ Начать сейчас", callback_data="wt:start_now"),
+            InlineKeyboardButton(text="🕐 Указать время", callback_data="wt:start_custom"),
+        ],
+    ])
+
+
+def _stop_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⏹ Остановить сейчас", callback_data="wt:stop_now"),
+            InlineKeyboardButton(text="🕐 Указать время", callback_data="wt:stop_custom"),
+        ],
+    ])
 
 
 async def remind_start_work(bot: Bot) -> None:
@@ -27,8 +46,8 @@ async def remind_start_work(bot: Bot) -> None:
             await bot.send_message(
                 user_id,
                 "⏰ <b>Доброе утро!</b>\n\n"
-                "Не забудь включить рабочий таймер: /work\n"
-                "Или зайди в 💼 Бизнес → ⏱ Таймер",
+                "Не забудь включить рабочий таймер.",
+                reply_markup=_start_kb(),
             )
     except Exception:
         logger.exception("remind_start_work_failed")
@@ -50,8 +69,8 @@ async def remind_stop_work(bot: Bot) -> None:
             await bot.send_message(
                 user_id,
                 f"⏰ <b>Конец рабочего дня!</b>\n\n"
-                f"Таймер запущен с {start_str} ({h}ч {m}мин)\n"
-                f"Не забудь остановить: /stop",
+                f"Таймер запущен с {start_str} ({h}ч {m}мин)",
+                reply_markup=_stop_kb(),
             )
     except Exception:
         logger.exception("remind_stop_work_failed")

@@ -1467,32 +1467,50 @@ async def get_ideas_for_mindmap(user_id: int, limit: int = 200) -> list[dict]:
 
 # ── Work Sessions ─────────────────────────────────────────────────
 
-async def start_work_session(user_id: int) -> dict:
+async def start_work_session(user_id: int, custom_time: "datetime | None" = None) -> dict:
     """Начать рабочую сессию (закрывает предыдущую незавершённую)."""
     # Закрываем незавершённую
     active = await get_active_work_session(user_id)
     if active:
         await stop_work_session(user_id)
 
-    row = await get_pool().fetchrow(
-        """INSERT INTO work_sessions (user_id, start_time)
-           VALUES ($1, NOW())
-           RETURNING *""",
-        user_id,
-    )
+    if custom_time:
+        row = await get_pool().fetchrow(
+            """INSERT INTO work_sessions (user_id, start_time)
+               VALUES ($1, $2)
+               RETURNING *""",
+            user_id, custom_time,
+        )
+    else:
+        row = await get_pool().fetchrow(
+            """INSERT INTO work_sessions (user_id, start_time)
+               VALUES ($1, NOW())
+               RETURNING *""",
+            user_id,
+        )
     return dict(row)
 
 
-async def stop_work_session(user_id: int) -> dict | None:
+async def stop_work_session(user_id: int, custom_time: "datetime | None" = None) -> dict | None:
     """Остановить активную рабочую сессию, посчитать длительность."""
-    row = await get_pool().fetchrow(
-        """UPDATE work_sessions
-           SET end_time = NOW(),
-               duration_minutes = EXTRACT(EPOCH FROM (NOW() - start_time))::int / 60
-           WHERE user_id = $1 AND end_time IS NULL
-           RETURNING *""",
-        user_id,
-    )
+    if custom_time:
+        row = await get_pool().fetchrow(
+            """UPDATE work_sessions
+               SET end_time = $2,
+                   duration_minutes = EXTRACT(EPOCH FROM ($2 - start_time))::int / 60
+               WHERE user_id = $1 AND end_time IS NULL
+               RETURNING *""",
+            user_id, custom_time,
+        )
+    else:
+        row = await get_pool().fetchrow(
+            """UPDATE work_sessions
+               SET end_time = NOW(),
+                   duration_minutes = EXTRACT(EPOCH FROM (NOW() - start_time))::int / 60
+               WHERE user_id = $1 AND end_time IS NULL
+               RETURNING *""",
+            user_id,
+        )
     return dict(row) if row else None
 
 

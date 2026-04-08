@@ -1,11 +1,18 @@
 """Хэндлеры бота Business — мульти-проектный бизнес-ассистент."""
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import structlog
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from src.ai.rag import rag_answer, store_event_embedding
 from src.ai.router import chat
@@ -348,16 +355,71 @@ async def _do_archive(callback: CallbackQuery, user_id: int, project_id: int) ->
 
 # === ⏱ Таймер — учёт рабочего времени (только admin) ===
 
+MSK = ZoneInfo("Europe/Moscow")
+
+
 def _to_msk(dt):
     """Конвертировать datetime в московское время для отображения."""
-    from zoneinfo import ZoneInfo
     if dt and hasattr(dt, "astimezone"):
-        return dt.astimezone(ZoneInfo("Europe/Moscow"))
+        return dt.astimezone(MSK)
     return dt
 
 
 def _is_timer_allowed(user_id: int) -> bool:
     return user_id == settings.admin_user_id
+
+
+def _parse_time_arg(text: str) -> datetime | None:
+    """Распарсить HH:MM из текста команды или свободного ввода.
+
+    Пример: '/work 9:30', '/stop 16:00', '16:00', '9:30'.
+    Возвращает datetime с сегодняшней датой в MSK → UTC.
+    """
+    import re
+    m = re.search(r"(\d{1,2})[:\.](\d{2})", text or "")
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    today_msk = datetime.now(MSK).date()
+    local_dt = datetime(today_msk.year, today_msk.month, today_msk.day,
+                        hour, minute, tzinfo=MSK)
+    return local_dt
+
+
+def _timer_start_kb() -> InlineKeyboardMarkup:
+    """Кнопки для напоминания о запуске таймера."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="▶️ Начать сейчас", callback_data="wt:start_now"),
+            InlineKeyboardButton(text="🕐 Указать время", callback_data="wt:start_custom"),
+        ],
+    ])
+
+
+def _timer_stop_kb() -> InlineKeyboardMarkup:
+    """Кнопки для напоминания об остановке таймера."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⏹ Остановить сейчас", callback_data="wt:stop_now"),
+            InlineKeyboardButton(text="🕐 Указать время", callback_data="wt:stop_custom"),
+        ],
+    ])
+
+
+def _format_session_result(session: dict) -> str:
+    dur = session.get("duration_minutes") or 0
+    h, m = divmod(dur, 60)
+    start_msk = _to_msk(session["start_time"])
+    end_msk = _to_msk(session["end_time"])
+    start_str = start_msk.strftime("%H:%M") if hasattr(start_msk, "strftime") else str(start_msk)
+    end_str = end_msk.strftime("%H:%M") if hasattr(end_msk, "strftime") else str(end_msk)
+    return (
+        f"⏹ <b>Работа завершена</b>\n\n"
+        f"🕐 {start_str} → {end_str}\n"
+        f"⏱ Длительность: <b>{h}ч {m}мин</b>"
+    )
 
 
 @router.message(F.text == "⏱ Таймер")
@@ -370,26 +432,24 @@ async def mode_timer(message: Message, db_user: dict) -> None:
     active = await get_active_work_session(user_id)
 
     if active:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
         start_msk = _to_msk(active["start_time"])
         start_str = start_msk.strftime("%H:%M") if hasattr(start_msk, "strftime") else str(start_msk)
-        now = datetime.now(ZoneInfo("Europe/Moscow"))
+        now = datetime.now(MSK)
         elapsed = int((now - active["start_time"]).total_seconds() // 60)
         elapsed_h, elapsed_m = divmod(max(elapsed, 0), 60)
         await message.answer(
             f"⏱ <b>Таймер запущен</b> с {start_str}\n"
             f"⏳ Прошло: {elapsed_h}ч {elapsed_m}мин\n\n"
-            f"⏹ Остановить: /stop",
+            f"⏹ /stop или /stop 16:00",
             reply_markup=main_keyboard(),
         )
     else:
         await message.answer(
             "⏱ <b>Учёт рабочего времени</b>\n\n"
-            "▶️ Начать: /work\n"
-            "⏹ Закончить: /stop\n"
+            "▶️ Начать: /work или /work 9:30\n"
+            "⏹ Закончить: /stop или /stop 16:00\n"
             "📊 Статистика: /workstats\n\n"
-            "Данные доступны психологу и доктору.",
+            "💡 <i>Можно указать время, если забыл вовремя нажать</i>",
             reply_markup=main_keyboard(),
         )
 
@@ -399,12 +459,14 @@ async def cmd_work_start(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     if not _is_timer_allowed(user_id):
         return
-    session = await start_work_session(user_id)
+    custom = _parse_time_arg(message.text or "")
+    session = await start_work_session(user_id, custom_time=custom)
     start_msk = _to_msk(session["start_time"])
     start_str = start_msk.strftime("%H:%M") if hasattr(start_msk, "strftime") else str(start_msk)
     await message.answer(
         f"▶️ <b>Работа начата</b> в {start_str}\n\n"
-        f"Когда закончишь — нажми /stop",
+        f"Когда закончишь — нажми /stop\n"
+        f"<i>Или /stop 16:00 с указанием времени</i>",
         reply_markup=main_keyboard(),
     )
 
@@ -414,27 +476,81 @@ async def cmd_work_stop(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     if not _is_timer_allowed(user_id):
         return
-    session = await stop_work_session(user_id)
+    custom = _parse_time_arg(message.text or "")
+    session = await stop_work_session(user_id, custom_time=custom)
     if not session:
         await message.answer(
             "❌ Нет активного таймера.\nНачать: /work",
             reply_markup=main_keyboard(),
         )
         return
+    await message.answer(_format_session_result(session), reply_markup=main_keyboard())
 
-    dur = session.get("duration_minutes") or 0
-    h, m = divmod(dur, 60)
+
+# --- Inline callback-и для кнопок в уведомлениях ---
+
+@router.callback_query(F.data == "wt:start_now")
+async def cb_work_start_now(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    if not _is_timer_allowed(user_id):
+        await callback.answer("Недоступно")
+        return
+    session = await start_work_session(user_id)
     start_msk = _to_msk(session["start_time"])
-    end_msk = _to_msk(session["end_time"])
-    start_str = start_msk.strftime("%H:%M") if hasattr(start_msk, "strftime") else str(start_msk)
-    end_str = end_msk.strftime("%H:%M") if hasattr(end_msk, "strftime") else str(end_msk)
+    start_str = start_msk.strftime("%H:%M")
+    await callback.answer(f"▶️ Таймер запущен в {start_str}")
+    if callback.message:
+        await callback.message.edit_text(  # type: ignore[union-attr]
+            f"▶️ <b>Работа начата</b> в {start_str}\n\n"
+            f"Когда закончишь — /stop или /stop 16:00",
+        )
 
-    await message.answer(
-        f"⏹ <b>Работа завершена</b>\n\n"
-        f"🕐 {start_str} → {end_str}\n"
-        f"⏱ Длительность: <b>{h}ч {m}мин</b>",
-        reply_markup=main_keyboard(),
-    )
+
+@router.callback_query(F.data == "wt:start_custom")
+async def cb_work_start_custom(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    if not _is_timer_allowed(user_id):
+        await callback.answer("Недоступно")
+        return
+    set_user_mode(user_id, Mode.TIMER_SET_START)
+    await callback.answer()
+    if callback.message:
+        await callback.message.edit_text(  # type: ignore[union-attr]
+            "🕐 Напиши время начала работы (формат <b>ЧЧ:ММ</b>).\n"
+            "Например: <code>9:30</code>",
+        )
+
+
+@router.callback_query(F.data == "wt:stop_now")
+async def cb_work_stop_now(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    if not _is_timer_allowed(user_id):
+        await callback.answer("Недоступно")
+        return
+    session = await stop_work_session(user_id)
+    if not session:
+        await callback.answer("Нет активного таймера")
+        return
+    await callback.answer("⏹ Таймер остановлен")
+    if callback.message:
+        await callback.message.edit_text(  # type: ignore[union-attr]
+            _format_session_result(session),
+        )
+
+
+@router.callback_query(F.data == "wt:stop_custom")
+async def cb_work_stop_custom(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    if not _is_timer_allowed(user_id):
+        await callback.answer("Недоступно")
+        return
+    set_user_mode(user_id, Mode.TIMER_SET_STOP)
+    await callback.answer()
+    if callback.message:
+        await callback.message.edit_text(  # type: ignore[union-attr]
+            "🕐 Напиши время окончания работы (формат <b>ЧЧ:ММ</b>).\n"
+            "Например: <code>16:00</code>",
+        )
 
 
 @router.message(Command("workstats"))
@@ -525,10 +641,47 @@ async def handle_text(message: Message, db_user: dict) -> None:
 async def _process_input(message: Message, user_id: int, text: str) -> None:
     mode = get_user_mode(user_id)
 
+    # Режим ввода времени начала (из inline-кнопки)
+    if mode == Mode.TIMER_SET_START:
+        custom = _parse_time_arg(text)
+        if not custom:
+            await message.answer(
+                "❌ Не понял формат. Напиши время как <b>ЧЧ:ММ</b>, например <code>9:30</code>",
+                reply_markup=main_keyboard(),
+            )
+            return
+        session = await start_work_session(user_id, custom_time=custom)
+        set_user_mode(user_id, Mode.TIMER)
+        start_str = _to_msk(session["start_time"]).strftime("%H:%M")
+        await message.answer(
+            f"▶️ <b>Работа начата</b> в {start_str}\n\n"
+            f"Когда закончишь — /stop или /stop 16:00",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    # Режим ввода времени окончания (из inline-кнопки)
+    if mode == Mode.TIMER_SET_STOP:
+        custom = _parse_time_arg(text)
+        if not custom:
+            await message.answer(
+                "❌ Не понял формат. Напиши время как <b>ЧЧ:ММ</b>, например <code>16:00</code>",
+                reply_markup=main_keyboard(),
+            )
+            return
+        session = await stop_work_session(user_id, custom_time=custom)
+        set_user_mode(user_id, Mode.TIMER)
+        if not session:
+            await message.answer("❌ Нет активного таймера.", reply_markup=main_keyboard())
+            return
+        await message.answer(_format_session_result(session), reply_markup=main_keyboard())
+        return
+
     # Режим таймера — подсказка
     if mode == Mode.TIMER:
         await message.answer(
-            "⏱ Используй /work и /stop для управления таймером.",
+            "⏱ Используй /work, /stop, /workstats.\n"
+            "💡 Можно указать время: /work 9:30 или /stop 16:00",
             reply_markup=main_keyboard(),
         )
         return

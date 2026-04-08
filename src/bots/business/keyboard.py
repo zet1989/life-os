@@ -31,6 +31,8 @@ class Mode(StrEnum):
     REPORT = "report"
     ADD_PROJECT = "add_project"
     TIMER = "timer"
+    TIMER_SET_START = "timer_set_start"
+    TIMER_SET_STOP = "timer_set_stop"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
