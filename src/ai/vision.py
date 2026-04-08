@@ -54,7 +54,7 @@ async def analyze_photo(
         },
     ]
     if caption:
-        user_content.append({"type": "text", "text": caption})
+        user_content.append({"type": "text", "text": f"Подпись пользователя: {caption}"})
 
     messages = [
         {"role": "system", "content": prompt},
