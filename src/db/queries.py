@@ -1118,6 +1118,139 @@ async def mark_reminder_sent(task_id: int) -> None:
     )
 
 
+# ── Debts / Credits ──────────────────────────────────────────────
+
+async def create_debt(
+    user_id: int,
+    debt_type: str,
+    title: str,
+    total_amount: float,
+    remaining: float | None = None,
+    monthly_payment: float | None = None,
+    interest_rate: float | None = None,
+    due_date: str | None = None,
+    creditor: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Создать запись о долге или кредите."""
+    if remaining is None:
+        remaining = total_amount
+    row = await get_pool().fetchrow(
+        """INSERT INTO debts
+               (user_id, debt_type, title, total_amount, remaining,
+                monthly_payment, interest_rate, due_date, creditor, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10)
+           RETURNING *""",
+        user_id, debt_type, title, total_amount, remaining,
+        monthly_payment, interest_rate, due_date, creditor, notes,
+    )
+    return dict(row)
+
+
+async def get_user_debts(user_id: int, active_only: bool = True) -> list[dict]:
+    """Список долгов/кредитов пользователя."""
+    condition = " AND is_active = TRUE" if active_only else ""
+    rows = await get_pool().fetch(
+        f"""SELECT * FROM debts
+            WHERE user_id = $1{condition}
+            ORDER BY debt_type, created_at DESC""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_debt(debt_id: int, user_id: int) -> dict | None:
+    """Получить один долг по ID (ACL: владелец)."""
+    row = await get_pool().fetchrow(
+        "SELECT * FROM debts WHERE id = $1 AND user_id = $2",
+        debt_id, user_id,
+    )
+    return dict(row) if row else None
+
+
+async def update_debt(debt_id: int, user_id: int, **fields) -> dict | None:
+    """Обновить поля долга (ACL: владелец)."""
+    allowed = {
+        "title", "total_amount", "remaining", "monthly_payment",
+        "interest_rate", "due_date", "creditor", "notes", "is_active",
+    }
+    parts, vals = [], []
+    idx = 3
+    for k, v in fields.items():
+        if k not in allowed:
+            continue
+        cast = "::date" if k == "due_date" else ""
+        parts.append(f"{k} = ${idx}{cast}")
+        vals.append(v)
+        idx += 1
+    if not parts:
+        return await get_debt(debt_id, user_id)
+    row = await get_pool().fetchrow(
+        f"UPDATE debts SET {', '.join(parts)} WHERE id = $1 AND user_id = $2 RETURNING *",
+        debt_id, user_id, *vals,
+    )
+    return dict(row) if row else None
+
+
+async def pay_debt(debt_id: int, user_id: int, amount: float) -> dict | None:
+    """Внести платёж по долгу/кредиту — уменьшить остаток."""
+    row = await get_pool().fetchrow(
+        """UPDATE debts
+           SET remaining = GREATEST(remaining - $3, 0)
+           WHERE id = $1 AND user_id = $2 AND is_active = TRUE
+           RETURNING *""",
+        debt_id, user_id, amount,
+    )
+    if row and float(row["remaining"]) <= 0:
+        await get_pool().execute(
+            "UPDATE debts SET is_active = FALSE WHERE id = $1", debt_id,
+        )
+        return {**dict(row), "is_active": False}
+    return dict(row) if row else None
+
+
+async def close_debt(debt_id: int, user_id: int) -> bool:
+    """Закрыть долг/кредит вручную."""
+    result = await get_pool().execute(
+        "UPDATE debts SET is_active = FALSE, remaining = 0 WHERE id = $1 AND user_id = $2",
+        debt_id, user_id,
+    )
+    return result != "UPDATE 0"
+
+
+async def delete_debt(debt_id: int, user_id: int) -> bool:
+    """Удалить долг/кредит (ACL: владелец)."""
+    result = await get_pool().execute(
+        "DELETE FROM debts WHERE id = $1 AND user_id = $2",
+        debt_id, user_id,
+    )
+    return result != "DELETE 0"
+
+
+async def get_debts_summary(user_id: int) -> dict:
+    """Сводка по активным долгам и кредитам."""
+    rows = await get_pool().fetch(
+        """SELECT debt_type,
+                  COUNT(*) AS cnt,
+                  COALESCE(SUM(remaining), 0) AS total_remaining,
+                  COALESCE(SUM(monthly_payment), 0) AS total_monthly
+           FROM debts
+           WHERE user_id = $1 AND is_active = TRUE
+           GROUP BY debt_type""",
+        user_id,
+    )
+    result = {"debt": {"count": 0, "remaining": 0.0, "monthly": 0.0},
+              "credit": {"count": 0, "remaining": 0.0, "monthly": 0.0}}
+    for r in rows:
+        dt = r["debt_type"]
+        result[dt] = {
+            "count": r["cnt"],
+            "remaining": float(r["total_remaining"]),
+            "monthly": float(r["total_monthly"]),
+        }
+    return result
+
+
 async def get_unclosed_tasks(user_id: int) -> list[dict]:
     """Невыполненные задачи на сегодня (для вечернего обзора)."""
     rows = await get_pool().fetch(

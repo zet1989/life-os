@@ -700,8 +700,7 @@ async def _show_profile_psy(message: Message, user_id: int) -> None:
             "📋 <b>Мой профиль</b>\n\n"
             f"{overrides}\n\n"
             "━━━━━━━━━━━━━━━\n"
-            "Чтобы обновить — просто напиши новый текст.\n"
-            "Профиль общий для 🏥 Здоровье и 🧠 Психолог."
+            "Чтобы обновить — просто напиши новый текст."
         )
     else:
         text = PSY_PROFILE_HELP
@@ -756,8 +755,7 @@ async def _process_profile_psy(message: Message, user_id: int, text: str) -> Non
     await message.answer(
         "✅ Профиль обновлён!\n\n"
         f"<i>{merged[:500]}</i>\n\n"
-        "Буду учитывать в терапевтической работе.\n"
-        "Профиль общий для 🏥 Здоровье и 🧠 Психолог.",
+        "Буду учитывать в терапевтической работе.",
         reply_markup=main_keyboard(),
     )
 

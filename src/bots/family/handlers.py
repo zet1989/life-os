@@ -27,6 +27,13 @@ from src.db.queries import (
     get_month_finance_by_category,
     get_projects_by_type,
     get_recent_finances,
+    create_debt,
+    get_user_debts,
+    get_debt,
+    pay_debt,
+    close_debt,
+    delete_debt,
+    get_debts_summary,
 )
 from src.bots.family.keyboard import (
     Mode,
@@ -38,6 +45,9 @@ from src.bots.family.keyboard import (
     set_user_mode,
 )
 from src.bots.family.prompts import (
+    ADVISOR_SYSTEM,
+    DEBT_PROMPT,
+    DEBT_PAY_PROMPT,
     EXPENSE_PROMPT,
     FAMILY_SYSTEM,
     INCOME_PROMPT,
@@ -91,6 +101,8 @@ async def cmd_start(message: Message, db_user: dict) -> None:
         f"💵 Доход — записать доход\n"
         f"📊 Отчёт — сводка за период\n"
         f"📈 Категории — куда уходят деньги\n"
+        f"💳 Долги — долги и кредиты\n"
+        f"🧠 Советник — финансовые советы AI\n"
         f"⚙️ Настройки — бюджетные лимиты\n\n"
         f"Также можно просто отправить фото чека!",
         reply_markup=main_keyboard(),
@@ -173,6 +185,277 @@ async def mode_settings(message: Message, db_user: dict) -> None:
         "Пока управляется через БД. В будущем — через чат.",
         reply_markup=main_keyboard(),
     )
+
+
+# === 💳 Долги и кредиты ===
+
+@router.message(F.text == "💳 Долги")
+async def mode_debts(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.DEBTS)
+    await _show_debts_menu(message, user_id)
+
+
+async def _show_debts_menu(message: Message, user_id: int) -> None:
+    """Показать список долгов/кредитов + меню."""
+    debts = await get_user_debts(user_id)
+    summary = await get_debts_summary(user_id)
+
+    text = "💳 <b>Долги и кредиты</b>\n\n"
+
+    if not debts:
+        text += "У вас нет активных долгов и кредитов.\n\n"
+    else:
+        # Кредиты (я должен)
+        credits = [d for d in debts if d["debt_type"] == "credit"]
+        loans = [d for d in debts if d["debt_type"] == "debt"]
+
+        if credits:
+            text += "🏦 <b>Кредиты (я должен):</b>\n"
+            for d in credits:
+                text += f"  <code>#{d['id']}</code> {d['title']}"
+                text += f" — остаток <b>{float(d['remaining']):,.0f} ₽</b>"
+                if d.get("monthly_payment"):
+                    text += f", платёж {float(d['monthly_payment']):,.0f} ₽/мес"
+                if d.get("due_date"):
+                    due = d["due_date"]
+                    if hasattr(due, "strftime"):
+                        due = due.strftime("%d.%m.%Y")
+                    text += f", до {due}"
+                if d.get("interest_rate"):
+                    text += f", {float(d['interest_rate']):.1f}%"
+                text += "\n"
+            cr = summary["credit"]
+            text += (
+                f"  💰 Итого: <b>{cr['remaining']:,.0f} ₽</b>"
+                f" (платежи: {cr['monthly']:,.0f} ₽/мес)\n\n"
+            )
+
+        if loans:
+            text += "📋 <b>Долги (мне должны):</b>\n"
+            for d in loans:
+                text += f"  <code>#{d['id']}</code> {d['title']}"
+                text += f" — остаток <b>{float(d['remaining']):,.0f} ₽</b>"
+                if d.get("creditor"):
+                    text += f" ({d['creditor']})"
+                if d.get("due_date"):
+                    due = d["due_date"]
+                    if hasattr(due, "strftime"):
+                        due = due.strftime("%d.%m.%Y")
+                    text += f", до {due}"
+                text += "\n"
+            db = summary["debt"]
+            text += f"  💰 Итого: <b>{db['remaining']:,.0f} ₽</b>\n\n"
+
+    text += (
+        "📝 <b>Команды:</b>\n"
+        "• Опиши долг/кредит текстом — добавлю\n"
+        "• /pay <code>ID сумма</code> — внести платёж\n"
+        "• /close_debt <code>ID</code> — закрыть\n"
+        "• /del_debt <code>ID</code> — удалить\n"
+    )
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+# === /pay — платёж по долгу/кредиту ===
+
+@router.message(Command("pay"))
+async def cmd_pay_debt(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/pay", "").strip().split()
+
+    if len(args) < 2 or not args[0].isdigit():
+        await message.answer(
+            "Использование: /pay <code>ID</code> <code>сумма</code>\n"
+            "Пример: /pay 1 5000\n"
+            "Посмотреть ID: 💳 Долги",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    debt_id = int(args[0])
+    try:
+        amount = float(args[1].replace(",", ".").replace(" ", ""))
+    except ValueError:
+        await message.answer("❌ Некорректная сумма.", reply_markup=main_keyboard())
+        return
+
+    result = await pay_debt(debt_id, user_id, amount)
+    if result:
+        remaining = float(result["remaining"])
+        if not result["is_active"]:
+            await message.answer(
+                f"🎉 <b>{result['title']}</b> полностью погашен!",
+                reply_markup=main_keyboard(),
+            )
+        else:
+            await message.answer(
+                f"✅ Платёж <b>{amount:,.0f} ₽</b> по «{result['title']}» принят.\n"
+                f"Остаток: <b>{remaining:,.0f} ₽</b>",
+                reply_markup=main_keyboard(),
+            )
+    else:
+        await message.answer(
+            f"❌ Долг #{debt_id} не найден или уже закрыт.",
+            reply_markup=main_keyboard(),
+        )
+
+
+# === /close_debt ===
+
+@router.message(Command("close_debt"))
+async def cmd_close_debt(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/close_debt", "").strip()
+    if not args or not args.isdigit():
+        await message.answer(
+            "Использование: /close_debt <code>ID</code>",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    ok = await close_debt(int(args), user_id)
+    if ok:
+        await message.answer(f"✅ Долг #{args} закрыт.", reply_markup=main_keyboard())
+    else:
+        await message.answer(f"❌ Долг #{args} не найден.", reply_markup=main_keyboard())
+
+
+# === /del_debt ===
+
+@router.message(Command("del_debt"))
+async def cmd_del_debt(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/del_debt", "").strip()
+    if not args or not args.isdigit():
+        await message.answer(
+            "Использование: /del_debt <code>ID</code>",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    ok = await delete_debt(int(args), user_id)
+    if ok:
+        await message.answer(f"✅ Долг #{args} удалён.", reply_markup=main_keyboard())
+    else:
+        await message.answer(f"❌ Долг #{args} не найден.", reply_markup=main_keyboard())
+
+
+# === 🧠 Советник — AI финансовый советник ===
+
+@router.message(F.text == "🧠 Советник")
+async def mode_advisor(message: Message, db_user: dict) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.ADVISOR)
+
+    processing = await message.answer("🧠 Анализирую ваши финансы...")
+
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    projects = await _ensure_family_project(user_id)
+    project_id = projects[0]["project_id"]
+
+    # Собираем ВСЕ данные для AI
+    # 1. Текущий месяц
+    cur_facts = await get_month_finance_by_category(project_id, now.year, now.month)
+    cur_expenses: dict[str, float] = {}
+    cur_income = 0.0
+    for r in cur_facts:
+        amt = float(r["total"])
+        if r["transaction_type"] == "expense":
+            cur_expenses[r["category"]] = amt
+        else:
+            cur_income += amt
+    cur_expense_total = sum(cur_expenses.values())
+
+    # 2. Прошлый месяц
+    prev_month = now.month - 1 if now.month > 1 else 12
+    prev_year = now.year if now.month > 1 else now.year - 1
+    prev_facts = await get_month_finance_by_category(project_id, prev_year, prev_month)
+    prev_expenses: dict[str, float] = {}
+    prev_income = 0.0
+    for r in prev_facts:
+        amt = float(r["total"])
+        if r["transaction_type"] == "expense":
+            prev_expenses[r["category"]] = amt
+        else:
+            prev_income += amt
+    prev_expense_total = sum(prev_expenses.values())
+
+    # 3. Долги и кредиты
+    debts = await get_user_debts(user_id)
+    debts_summary = await get_debts_summary(user_id)
+
+    # 4. Бюджетные лимиты
+    from src.db.queries import get_project
+    proj = await get_project(project_id)
+    limits = (proj.get("metadata") or {}).get("limits", {})
+
+    # Формируем данные для AI
+    month_names = [
+        "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+        "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+    ]
+
+    data_text = f"== ФИНАНСОВЫЕ ДАННЫЕ СЕМЬИ ==\n\n"
+    data_text += f"Дата анализа: {now.strftime('%d.%m.%Y')}, день {now.day} из месяца\n\n"
+
+    data_text += f"--- {month_names[now.month]} {now.year} (текущий) ---\n"
+    data_text += f"Доход: {cur_income:,.0f} ₽\n"
+    data_text += f"Расход: {cur_expense_total:,.0f} ₽\n"
+    if cur_expenses:
+        data_text += "По категориям:\n"
+        for cat, amt in sorted(cur_expenses.items(), key=lambda x: x[1], reverse=True):
+            data_text += f"  {cat}: {amt:,.0f} ₽\n"
+
+    data_text += f"\n--- {month_names[prev_month]} {prev_year} (прошлый) ---\n"
+    data_text += f"Доход: {prev_income:,.0f} ₽\n"
+    data_text += f"Расход: {prev_expense_total:,.0f} ₽\n"
+    if prev_expenses:
+        data_text += "По категориям:\n"
+        for cat, amt in sorted(prev_expenses.items(), key=lambda x: x[1], reverse=True):
+            data_text += f"  {cat}: {amt:,.0f} ₽\n"
+
+    if debts:
+        data_text += "\n--- ДОЛГИ И КРЕДИТЫ ---\n"
+        for d in debts:
+            data_text += f"  {d['debt_type'].upper()}: {d['title']}"
+            data_text += f" | остаток: {float(d['remaining']):,.0f} ₽"
+            if d.get("monthly_payment"):
+                data_text += f" | платёж: {float(d['monthly_payment']):,.0f} ₽/мес"
+            if d.get("interest_rate"):
+                data_text += f" | ставка: {float(d['interest_rate']):.1f}%"
+            if d.get("due_date"):
+                due = d["due_date"]
+                if hasattr(due, "strftime"):
+                    due = due.strftime("%d.%m.%Y")
+                data_text += f" | до: {due}"
+            data_text += "\n"
+        cr = debts_summary["credit"]
+        db = debts_summary["debt"]
+        data_text += f"  Итого кредиты: {cr['remaining']:,.0f} ₽ (платежи: {cr['monthly']:,.0f} ₽/мес)\n"
+        data_text += f"  Итого мне должны: {db['remaining']:,.0f} ₽\n"
+
+    if limits:
+        data_text += "\n--- БЮДЖЕТНЫЕ ЛИМИТЫ ---\n"
+        for cat, lim in limits.items():
+            data_text += f"  {cat}: {lim:,.0f} ₽\n"
+
+    messages = [
+        {"role": "system", "content": ADVISOR_SYSTEM},
+        {"role": "user", "content": data_text},
+    ]
+    advice = await chat(
+        messages=messages,
+        task_type="family_advisor",
+        user_id=user_id,
+        bot_source=BOT_SOURCE,
+    )
+
+    await safe_edit(processing, f"🧠 <b>Финансовый советник</b>\n\n{advice}")
+    await save_assistant_reply(user_id, BOT_SOURCE, advice)
 
 
 # === 📉 Графики ===
@@ -833,7 +1116,12 @@ async def handle_text(message: Message, bot: Bot, db_user: dict) -> None:
 async def _process_input(message: Message, user_id: int, text: str) -> None:
     mode = get_user_mode(user_id)
 
-    if mode in (Mode.SETTINGS, Mode.REPORT, Mode.CATEGORIES, Mode.CHARTS):
+    if mode in (Mode.SETTINGS, Mode.REPORT, Mode.CATEGORIES, Mode.CHARTS, Mode.ADVISOR):
+        return
+
+    # Режим долгов — парсим и добавляем
+    if mode == Mode.DEBTS:
+        await _process_debt_input(message, user_id, text)
         return
 
     transaction_type = "expense" if mode == Mode.EXPENSE else "income"
@@ -849,6 +1137,52 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
             "К какому проекту отнести?",
             reply_markup=projects_inline(projects, action=action),
         )
+
+
+async def _process_debt_input(message: Message, user_id: int, text: str) -> None:
+    """Распарсить текст пользователя и создать долг/кредит."""
+    messages_ai = [
+        {"role": "system", "content": FAMILY_SYSTEM + "\n\n" + DEBT_PROMPT},
+        {"role": "user", "content": text},
+    ]
+    result = await chat(
+        messages=messages_ai,
+        task_type="family_parse",
+        user_id=user_id,
+        bot_source=BOT_SOURCE,
+    )
+
+    parsed = _extract_json(result)
+    if parsed and "total_amount" in parsed:
+        debt = await create_debt(
+            user_id=user_id,
+            debt_type=parsed.get("debt_type", "credit"),
+            title=parsed.get("title", "Без названия"),
+            total_amount=parsed["total_amount"],
+            remaining=parsed.get("remaining"),
+            monthly_payment=parsed.get("monthly_payment"),
+            interest_rate=parsed.get("interest_rate"),
+            due_date=parsed.get("due_date"),
+            creditor=parsed.get("creditor"),
+            notes=parsed.get("notes"),
+        )
+        dtype = "Кредит" if debt["debt_type"] == "credit" else "Долг"
+        confirm = f"✅ {dtype} добавлен: <b>{debt['title']}</b>\n"
+        confirm += f"Сумма: <b>{float(debt['total_amount']):,.0f} ₽</b>\n"
+        if debt.get("monthly_payment"):
+            confirm += f"Платёж: {float(debt['monthly_payment']):,.0f} ₽/мес\n"
+        if debt.get("due_date"):
+            due = debt["due_date"]
+            if hasattr(due, "strftime"):
+                due = due.strftime("%d.%m.%Y")
+            confirm += f"До: {due}\n"
+        if debt.get("interest_rate"):
+            confirm += f"Ставка: {float(debt['interest_rate']):.1f}%\n"
+        await message.answer(confirm, reply_markup=main_keyboard())
+    else:
+        await safe_answer(message, result, reply_markup=main_keyboard())
+
+    await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
 async def _attach_finance_direct(

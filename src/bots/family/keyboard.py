@@ -22,13 +22,16 @@ class Mode(StrEnum):
     CATEGORIES = "categories"
     CHARTS = "charts"
     SETTINGS = "settings"
+    DEBTS = "debts"
+    ADVISOR = "advisor"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="💰 Расход"), KeyboardButton(text="💵 Доход")],
         [KeyboardButton(text="📊 Отчёт"), KeyboardButton(text="📈 Категории")],
-        [KeyboardButton(text="📉 Графики"), KeyboardButton(text="⚙️ Настройки")],
+        [KeyboardButton(text="📉 Графики"), KeyboardButton(text="💳 Долги")],
+        [KeyboardButton(text="🧠 Советник"), KeyboardButton(text="⚙️ Настройки")],
     ]
     from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
     if is_unified():

@@ -797,8 +797,7 @@ async def _process_profile(message: Message, user_id: int, text: str) -> None:
     await message.answer(
         "✅ Профиль обновлён!\n\n"
         f"<i>{merged[:500]}</i>\n\n"
-        "Буду учитывать во всех рекомендациях.\n"
-        "Профиль общий для 🏥 Здоровье и 🧠 Психолог.",
+        "Буду учитывать во всех рекомендациях.",
         reply_markup=main_keyboard(),
     )
 
@@ -812,8 +811,7 @@ async def _show_profile(message: Message, user_id: int) -> None:
             "📋 <b>Мой профиль</b>\n\n"
             f"{overrides}\n\n"
             "━━━━━━━━━━━━━━━\n"
-            "Чтобы обновить — просто напиши новый текст.\n"
-            "Профиль общий для 🏥 Здоровье и 🧠 Психолог."
+            "Чтобы обновить — просто напиши новый текст."
         )
     else:
         text = PROFILE_HELP
