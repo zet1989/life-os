@@ -1450,3 +1450,106 @@ async def get_ideas_for_mindmap(user_id: int, limit: int = 200) -> list[dict]:
         user_id, limit,
     )
     return [dict(r) for r in rows]
+
+
+# ── Work Sessions ─────────────────────────────────────────────────
+
+async def start_work_session(user_id: int) -> dict:
+    """Начать рабочую сессию (закрывает предыдущую незавершённую)."""
+    # Закрываем незавершённую
+    active = await get_active_work_session(user_id)
+    if active:
+        await stop_work_session(user_id)
+
+    row = await get_pool().fetchrow(
+        """INSERT INTO work_sessions (user_id, start_time)
+           VALUES ($1, NOW())
+           RETURNING *""",
+        user_id,
+    )
+    return dict(row)
+
+
+async def stop_work_session(user_id: int) -> dict | None:
+    """Остановить активную рабочую сессию, посчитать длительность."""
+    row = await get_pool().fetchrow(
+        """UPDATE work_sessions
+           SET end_time = NOW(),
+               duration_minutes = EXTRACT(EPOCH FROM (NOW() - start_time))::int / 60
+           WHERE user_id = $1 AND end_time IS NULL
+           RETURNING *""",
+        user_id,
+    )
+    return dict(row) if row else None
+
+
+async def get_active_work_session(user_id: int) -> dict | None:
+    """Получить активную (незавершённую) сессию."""
+    row = await get_pool().fetchrow(
+        "SELECT * FROM work_sessions WHERE user_id = $1 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1",
+        user_id,
+    )
+    return dict(row) if row else None
+
+
+async def get_work_sessions(user_id: int, days: int = 30) -> list[dict]:
+    """Рабочие сессии за последние N дней."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM work_sessions
+           WHERE user_id = $1
+             AND start_time >= NOW() - ($2 || ' days')::interval
+             AND end_time IS NOT NULL
+           ORDER BY start_time DESC""",
+        user_id, str(days),
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_work_stats(user_id: int, days: int = 7) -> dict:
+    """Статистика рабочего времени за N дней."""
+    row = await get_pool().fetchrow(
+        """SELECT
+               COUNT(*) AS sessions,
+               COALESCE(SUM(duration_minutes), 0) AS total_minutes,
+               COALESCE(AVG(duration_minutes), 0) AS avg_minutes,
+               COALESCE(MAX(duration_minutes), 0) AS max_minutes,
+               COUNT(DISTINCT start_time::date) AS work_days
+           FROM work_sessions
+           WHERE user_id = $1
+             AND start_time >= NOW() - ($2 || ' days')::interval
+             AND end_time IS NOT NULL""",
+        user_id, str(days),
+    )
+    return dict(row) if row else {
+        "sessions": 0, "total_minutes": 0, "avg_minutes": 0,
+        "max_minutes": 0, "work_days": 0,
+    }
+
+
+async def get_work_summary_text(user_id: int, days: int = 7) -> str:
+    """Текстовая сводка рабочего времени для контекста других ботов."""
+    stats = await get_work_stats(user_id, days)
+    sessions = await get_work_sessions(user_id, days=days)
+
+    if stats["sessions"] == 0:
+        return ""
+
+    total_h = int(stats["total_minutes"]) // 60
+    total_m = int(stats["total_minutes"]) % 60
+    avg_m = int(stats["avg_minutes"])
+
+    lines = [
+        f"⏱ РАБОЧЕЕ ВРЕМЯ (последние {days} дней):",
+        f"  Сессий: {stats['sessions']}, рабочих дней: {stats['work_days']}",
+        f"  Всего: {total_h}ч {total_m}мин, среднее: {avg_m} мин/сессия",
+    ]
+
+    # Последние 5 сессий
+    for s in sessions[:5]:
+        st = s["start_time"]
+        dur = s.get("duration_minutes") or 0
+        if hasattr(st, "strftime"):
+            st = st.strftime("%d.%m %H:%M")
+        lines.append(f"  [{st}] {dur} мин")
+
+    return "\n".join(lines)

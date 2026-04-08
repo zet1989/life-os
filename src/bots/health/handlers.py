@@ -820,15 +820,19 @@ async def _show_profile(message: Message, user_id: int) -> None:
 
 async def _process_doctor(message: Message, user_id: int, text: str) -> None:
     """Обработка запроса к доктору — с историей, на gpt-4o."""
+    from src.db.queries import get_work_summary_text
     meals_ctx = await _today_meals_context(user_id)
     workouts_ctx = await _today_workouts_context(user_id)
     profile = await _get_user_settings(user_id)
+    work_ctx = await get_work_summary_text(user_id, days=7)
     system = DOCTOR_SYSTEM.format(
         current_time=_now_str(),
         today_meals_context=meals_ctx,
         today_workouts_context=workouts_ctx,
         user_profile=profile,
     )
+    if work_ctx:
+        system += f"\n\n{work_ctx}"
     messages = await build_messages(
         user_id=user_id,
         bot_source=BOT_SOURCE,

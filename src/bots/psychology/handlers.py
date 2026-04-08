@@ -18,7 +18,7 @@ from src.ai.router import chat
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer, safe_answer_voice
-from src.db.queries import create_event, get_active_goals, get_cross_bot_summary, get_gratitude_today, get_life_profile, get_user, update_user_settings
+from src.db.queries import create_event, get_active_goals, get_cross_bot_summary, get_gratitude_today, get_life_profile, get_user, get_work_summary_text, update_user_settings
 from src.bots.psychology.keyboard import (
     Mode,
     energy_inline,
@@ -99,6 +99,12 @@ async def _build_life_context(user_id: int) -> str:
                 detail = jd["description"]
 
             lines.append(f"  [{ts}] {bot} | {event_type}: {detail}")
+
+    # Рабочее время
+    work_summary = await get_work_summary_text(user_id, days=7)
+    if work_summary:
+        lines.append("")
+        lines.append(work_summary)
 
     return "\n".join(lines)
 

@@ -24,6 +24,7 @@ class Mode(StrEnum):
     SETTINGS = "settings"
     DEBTS = "debts"
     ADVISOR = "advisor"
+    TIMER = "timer"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -31,7 +32,8 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="💰 Расход"), KeyboardButton(text="💵 Доход")],
         [KeyboardButton(text="📊 Отчёт"), KeyboardButton(text="📈 Категории")],
         [KeyboardButton(text="📉 Графики"), KeyboardButton(text="💳 Долги")],
-        [KeyboardButton(text="🧠 Советник"), KeyboardButton(text="⚙️ Настройки")],
+        [KeyboardButton(text="⏱ Таймер"), KeyboardButton(text="🧠 Советник")],
+        [KeyboardButton(text="⚙️ Настройки")],
     ]
     from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
     if is_unified():
