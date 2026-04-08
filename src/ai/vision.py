@@ -24,6 +24,7 @@ async def analyze_photo(
     task_type: str = "meal_photo",
     user_id: int | None = None,
     bot_source: str | None = None,
+    caption: str | None = None,
 ) -> str:
     """Скачать фото из Telegram, сохранить локально, отправить в Vision LLM (base64)."""
     # Скачиваем фото
@@ -46,16 +47,20 @@ async def analyze_photo(
     logger.info("photo_prepared", task=task_type, size=len(photo_bytes))
 
     # Формируем messages с image_url для Vision
+    user_content: list[dict] = [
+        {
+            "type": "image_url",
+            "image_url": {"url": data_uri},
+        },
+    ]
+    if caption:
+        user_content.append({"type": "text", "text": caption})
+
     messages = [
         {"role": "system", "content": prompt},
         {
             "role": "user",
-            "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {"url": data_uri},
-                },
-            ],
+            "content": user_content,
         },
     ]
 

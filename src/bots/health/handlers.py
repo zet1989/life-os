@@ -582,6 +582,7 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
     processing = await message.answer("⏳ Анализирую фото...")
 
     photo = message.photo[-1]  # самое большое разрешение
+    caption = message.caption or ""
     result = await analyze_photo(
         bot=bot,
         photo=photo,
@@ -589,6 +590,7 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
         task_type="meal_photo",
         user_id=user_id,
         bot_source=BOT_SOURCE,
+        caption=caption,
     )
 
     # Пытаемся извлечь JSON из ответа
@@ -596,15 +598,16 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
 
     # Сохраняем событие ТОЛЬКО если есть КБЖУ
     if json_data and "calories" in json_data:
+        raw = caption or "[фото еды]"
         await create_event(
             user_id=user_id,
             event_type="meal",
             bot_source=BOT_SOURCE,
-            raw_text="[фото еды]",
+            raw_text=raw,
             json_data=json_data,
             media_url=None,
         )
-        await obsidian.log_meal(json_data, "[фото еды]")
+        await obsidian.log_meal(json_data, raw)
 
     display_text = _format_meal_response(result, json_data)
 
