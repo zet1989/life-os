@@ -1133,16 +1133,24 @@ async def create_debt(
     notes: str | None = None,
 ) -> dict:
     """Создать запись о долге или кредите."""
+    from datetime import date as _date
     if remaining is None:
         remaining = total_amount
+    # asyncpg требует datetime.date, не строку
+    parsed_due: _date | None = None
+    if due_date:
+        try:
+            parsed_due = _date.fromisoformat(str(due_date)[:10])
+        except (ValueError, TypeError):
+            parsed_due = None
     row = await get_pool().fetchrow(
         """INSERT INTO debts
                (user_id, debt_type, title, total_amount, remaining,
                 monthly_payment, interest_rate, due_date, creditor, notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            RETURNING *""",
         user_id, debt_type, title, total_amount, remaining,
-        monthly_payment, interest_rate, due_date, creditor, notes,
+        monthly_payment, interest_rate, parsed_due, creditor, notes,
     )
     return dict(row)
 
@@ -1170,6 +1178,7 @@ async def get_debt(debt_id: int, user_id: int) -> dict | None:
 
 async def update_debt(debt_id: int, user_id: int, **fields) -> dict | None:
     """Обновить поля долга (ACL: владелец)."""
+    from datetime import date as _date
     allowed = {
         "title", "total_amount", "remaining", "monthly_payment",
         "interest_rate", "due_date", "creditor", "notes", "is_active",
@@ -1179,8 +1188,12 @@ async def update_debt(debt_id: int, user_id: int, **fields) -> dict | None:
     for k, v in fields.items():
         if k not in allowed:
             continue
-        cast = "::date" if k == "due_date" else ""
-        parts.append(f"{k} = ${idx}{cast}")
+        if k == "due_date" and isinstance(v, str):
+            try:
+                v = _date.fromisoformat(v[:10])
+            except (ValueError, TypeError):
+                v = None
+        parts.append(f"{k} = ${idx}")
         vals.append(v)
         idx += 1
     if not parts:
