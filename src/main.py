@@ -61,8 +61,10 @@ def _collect_unified() -> dict:
 
     # Business
     from src.bots.business.handlers import router as business_router
+    from src.bots.business.scheduler import setup_scheduler as business_scheduler
     business_router.message.filter(SectionFilter("business"))
     routers.append(business_router)
+    scheduler_factories.append(business_scheduler)
 
     # Partner
     from src.bots.partner.handlers import router as partner_router

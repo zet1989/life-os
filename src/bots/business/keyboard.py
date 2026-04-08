@@ -1,5 +1,6 @@
 """Reply- и Inline-клавиатуры бота Business."""
 
+import contextvars
 from enum import StrEnum
 
 from aiogram.types import (
@@ -14,6 +15,14 @@ _user_modes: dict[int, "Mode"] = {}
 # Временное хранилище pending-текста для привязки к проекту
 _pending_text: dict[int, str] = {}
 
+# ContextVar — user_id текущего запроса (ставится middleware в handlers.py)
+_kb_user: contextvars.ContextVar[int] = contextvars.ContextVar("kb_user", default=0)
+
+
+def set_keyboard_user(user_id: int) -> None:
+    """Установить user_id для текущего asyncio-контекста (middleware)."""
+    _kb_user.set(user_id)
+
 
 class Mode(StrEnum):
     IDEA = "idea"
@@ -25,11 +34,19 @@ class Mode(StrEnum):
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
+    from src.config import settings
+
+    user_id = _kb_user.get()
+    is_admin = (user_id == 0) or (user_id == settings.admin_user_id)
+
     rows = [
         [KeyboardButton(text="💡 Идея"), KeyboardButton(text="📋 Задача")],
         [KeyboardButton(text="📁 Проекты"), KeyboardButton(text="📊 Отчёт")],
-        [KeyboardButton(text="⏱ Таймер"), KeyboardButton(text="➕ Новый проект")],
     ]
+    if is_admin:
+        rows.append([KeyboardButton(text="⏱ Таймер"), KeyboardButton(text="➕ Новый проект")])
+    else:
+        rows.append([KeyboardButton(text="➕ Новый проект")])
     from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
     if is_unified():
         rows.append([KeyboardButton(text=MENU_BUTTON_TEXT)])

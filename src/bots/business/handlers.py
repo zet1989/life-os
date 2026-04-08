@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from src.ai.rag import rag_answer, store_event_embedding
 from src.ai.router import chat
 from src.ai.whisper import transcribe_voice
+from src.config import settings
 from src.core.context import build_messages, save_assistant_reply
 from src.utils.telegram import safe_answer, safe_answer_voice
 from src.db.queries import (
@@ -33,6 +34,7 @@ from src.bots.business.keyboard import (
     main_keyboard,
     pop_pending,
     projects_inline,
+    set_keyboard_user,
     set_pending,
     set_user_mode,
 )
@@ -48,6 +50,22 @@ logger = structlog.get_logger()
 router = Router()
 
 BOT_SOURCE = "business"
+
+
+# --- Middleware: устанавливает user_id для keyboard (скрытие таймера) ---
+
+@router.message.middleware()
+async def _set_kb_user_mw(handler, event, data):
+    if event.from_user:
+        set_keyboard_user(event.from_user.id)
+    return await handler(event, data)
+
+
+@router.callback_query.middleware()
+async def _set_kb_user_cb_mw(handler, event, data):
+    if event.from_user:
+        set_keyboard_user(event.from_user.id)
+    return await handler(event, data)
 
 
 async def _get_project_system(project_id: int) -> str:
@@ -66,17 +84,19 @@ async def _get_project_system(project_id: int) -> str:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
     name = db_user.get("display_name") or message.from_user.first_name  # type: ignore[union-attr]
-    await message.answer(
+    text = (
         f"Привет, {name}! 💼\n"
         f"Я твой бизнес-ассистент.\n\n"
         f"💡 Идея — запиши бизнес-идею\n"
         f"📋 Задача — поставь задачу по проекту\n"
         f"📁 Проекты — управление проектами\n"
-        f"📊 Отчёт — финансовая сводка\n"
-        f"⏱ Таймер — учёт рабочего времени",
-        reply_markup=main_keyboard(),
+        f"📊 Отчёт — финансовая сводка"
     )
+    if _is_timer_allowed(user_id):
+        text += "\n⏱ Таймер — учёт рабочего времени"
+    await message.answer(text, reply_markup=main_keyboard())
 
 
 # === /add_project <name> ===
@@ -326,7 +346,7 @@ async def _do_archive(callback: CallbackQuery, user_id: int, project_id: int) ->
         await callback.answer("Ошибка архивации")
 
 
-# === ⏱ Таймер — учёт рабочего времени ===
+# === ⏱ Таймер — учёт рабочего времени (только admin) ===
 
 def _to_msk(dt):
     """Конвертировать datetime в московское время для отображения."""
@@ -336,9 +356,16 @@ def _to_msk(dt):
     return dt
 
 
+def _is_timer_allowed(user_id: int) -> bool:
+    return user_id == settings.admin_user_id
+
+
 @router.message(F.text == "⏱ Таймер")
 async def mode_timer(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
+    if not _is_timer_allowed(user_id):
+        await message.answer("Эта функция недоступна.", reply_markup=main_keyboard())
+        return
     set_user_mode(user_id, Mode.TIMER)
     active = await get_active_work_session(user_id)
 
@@ -370,6 +397,8 @@ async def mode_timer(message: Message, db_user: dict) -> None:
 @router.message(Command("work"))
 async def cmd_work_start(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
+    if not _is_timer_allowed(user_id):
+        return
     session = await start_work_session(user_id)
     start_msk = _to_msk(session["start_time"])
     start_str = start_msk.strftime("%H:%M") if hasattr(start_msk, "strftime") else str(start_msk)
@@ -383,6 +412,8 @@ async def cmd_work_start(message: Message, db_user: dict) -> None:
 @router.message(Command("stop"))
 async def cmd_work_stop(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
+    if not _is_timer_allowed(user_id):
+        return
     session = await stop_work_session(user_id)
     if not session:
         await message.answer(
@@ -409,6 +440,8 @@ async def cmd_work_stop(message: Message, db_user: dict) -> None:
 @router.message(Command("workstats"))
 async def cmd_workstats(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
+    if not _is_timer_allowed(user_id):
+        return
 
     week = await get_work_stats(user_id, days=7)
     month = await get_work_stats(user_id, days=30)
