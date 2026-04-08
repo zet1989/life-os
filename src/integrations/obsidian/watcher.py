@@ -142,8 +142,12 @@ async def _process_kanban_changes(content: str, user_id: int) -> None:
 
 
 async def _index_note_for_rag(user_id: int, relative_path: str, content: str) -> None:
-    """Создать/обновить event с embedding для Obsidian-заметки (RAG)."""
-    from src.db.queries import create_event, get_obsidian_note_event, update_event_raw_text
+    """Создать/обновить events с embedding для Obsidian-заметки (RAG).
+
+    Большие файлы разбиваются на чанки по ~4000 символов с перекрытием.
+    Каждый чанк → отдельный event в pgvector.
+    """
+    from src.db.queries import create_event, get_obsidian_note_events, update_event_raw_text, delete_event
     from src.ai.rag import store_event_embedding
     import re
 
@@ -155,33 +159,110 @@ async def _index_note_for_rag(user_id: int, relative_path: str, content: str) ->
     if len(text) < 30:
         return
 
-    # Ограничиваем длину для embedding (max ~8000 токенов ≈ 6000 символов)
-    embed_text = f"[Obsidian: {relative_path}]\n{text[:6000]}"
+    # Чанкинг: разбиваем текст на куски
+    chunks = _chunk_text(text)
 
     try:
-        # Проверяем, есть ли уже event для этого файла
-        existing = await get_obsidian_note_event(user_id, relative_path)
+        # Получаем все существующие events для этого файла
+        existing_events = await get_obsidian_note_events(user_id, relative_path)
+        existing_by_idx = {e.get("json_data", {}).get("chunk_index", 0): e for e in existing_events}
 
-        if existing:
-            # Обновляем текст и пересчитываем embedding
-            if existing.get("raw_text") != text[:4000]:
-                await update_event_raw_text(existing["id"], text[:4000])
-                await store_event_embedding(existing["id"], embed_text, user_id=user_id, bot_source="obsidian")
-                logger.info("obsidian.note_reindexed", file=relative_path)
-        else:
-            # Создаём новый event
-            event = await create_event(
-                user_id=user_id,
-                event_type="obsidian_note",
-                bot_source="obsidian",
-                raw_text=text[:4000],
-                json_data={"source_file": relative_path},
-            )
-            await store_event_embedding(event["id"], embed_text, user_id=user_id, bot_source="obsidian")
-            logger.info("obsidian.note_indexed", file=relative_path, event_id=event["id"])
+        for idx, chunk in enumerate(chunks):
+            embed_prefix = f"[Obsidian: {relative_path}]"
+            if len(chunks) > 1:
+                embed_prefix += f" [часть {idx + 1}/{len(chunks)}]"
+            embed_text = f"{embed_prefix}\n{chunk}"
+
+            json_data = {
+                "source_file": relative_path,
+                "chunk_index": idx,
+                "total_chunks": len(chunks),
+            }
+
+            existing = existing_by_idx.get(idx)
+
+            if existing:
+                # Обновляем, если текст изменился
+                if existing.get("raw_text") != chunk[:4000]:
+                    await update_event_raw_text(existing["id"], chunk[:4000])
+                    await store_event_embedding(existing["id"], embed_text, user_id=user_id, bot_source="obsidian")
+                    logger.info("obsidian.chunk_reindexed", file=relative_path, chunk=idx + 1, total=len(chunks))
+            else:
+                # Создаём новый event для этого чанка
+                event = await create_event(
+                    user_id=user_id,
+                    event_type="obsidian_note",
+                    bot_source="obsidian",
+                    raw_text=chunk[:4000],
+                    json_data=json_data,
+                )
+                await store_event_embedding(event["id"], embed_text, user_id=user_id, bot_source="obsidian")
+                logger.info("obsidian.chunk_indexed", file=relative_path, chunk=idx + 1, total=len(chunks),
+                            event_id=event["id"])
+
+        # Удаляем лишние чанки (если файл стал короче)
+        for old_idx, old_event in existing_by_idx.items():
+            if old_idx >= len(chunks):
+                await delete_event(old_event["id"])
+                logger.info("obsidian.chunk_deleted", file=relative_path, chunk=old_idx + 1)
 
     except Exception:
         logger.exception("obsidian.index_error", file=relative_path)
+
+
+def _chunk_text(text: str, chunk_size: int = 4000, overlap: int = 400) -> list[str]:
+    """Разбить текст на чанки с перекрытием.
+
+    Пытается разбивать по абзацам/заголовкам для сохранения смысловой целостности.
+    Если текст <= chunk_size — возвращает один чанк (обратная совместимость).
+    """
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks: list[str] = []
+    start = 0
+
+    while start < len(text):
+        end = start + chunk_size
+
+        if end >= len(text):
+            # Последний кусок
+            chunks.append(text[start:])
+            break
+
+        # Ищем ближайший разрыв параграфа/заголовка перед концом чанка
+        # Приоритет: заголовок ## → пустая строка → перенос строки
+        best_break = -1
+
+        # Ищем разрыв в последних 800 символах чанка (не слишком рано)
+        search_zone = text[end - 800:end]
+
+        # Заголовок Markdown (## ...)
+        for sep in ["\n## ", "\n### ", "\n# "]:
+            pos = search_zone.rfind(sep)
+            if pos != -1:
+                best_break = (end - 800) + pos
+                break
+
+        # Пустая строка (абзац)
+        if best_break == -1:
+            pos = search_zone.rfind("\n\n")
+            if pos != -1:
+                best_break = (end - 800) + pos
+
+        # Просто перенос строки
+        if best_break == -1:
+            pos = search_zone.rfind("\n")
+            if pos != -1:
+                best_break = (end - 800) + pos
+
+        if best_break > start:
+            end = best_break
+
+        chunks.append(text[start:end].strip())
+        start = end - overlap  # Перекрытие для контекста
+
+    return [c for c in chunks if len(c) >= 30]
 
 
 _observer: Observer | None = None

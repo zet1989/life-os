@@ -99,6 +99,24 @@ async def get_obsidian_note_event(user_id: int, source_file: str) -> dict | None
     return dict(row) if row else None
 
 
+async def get_obsidian_note_events(user_id: int, source_file: str) -> list[dict]:
+    """Найти ВСЕ events (чанки) для obsidian_note по source_file."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM events
+           WHERE user_id = $1
+             AND event_type = 'obsidian_note'
+             AND json_data->>'source_file' = $2
+           ORDER BY (json_data->>'chunk_index')::int NULLS FIRST""",
+        user_id, source_file,
+    )
+    return [dict(r) for r in rows]
+
+
+async def delete_event(event_id: int) -> None:
+    """Удалить event по id."""
+    await get_pool().execute("DELETE FROM events WHERE id = $1", event_id)
+
+
 async def get_recent_events(
     user_id: int,
     event_type: str,
