@@ -708,30 +708,33 @@ async def _show_profile_psy(message: Message, user_id: int) -> None:
     await message.answer(text, reply_markup=main_keyboard())
 
 
+PROFILE_MERGE_SYSTEM = (
+    "Ты — редактор профиля пользователя. Профиль — это ТОЛЬКО факты о человеке, "
+    "которые нужны AI-ассистенту для персонализации ответов.\n\n"
+    "Правила:\n"
+    "1. Извлекай ТОЛЬКО фактическую информацию о пользователе: возраст, имя, рост, вес, "
+    "привычки, зависимости, болезни, лекарства, режим дня, цели, контекст работы и т.д.\n"
+    "2. УДАЛЯЙ всё, что НЕ является фактом о пользователе: вопросы к боту, просьбы, "
+    "приветствия, обращения, комментарии, рассуждения.\n"
+    "3. Если есть СУЩЕСТВУЮЩИЙ профиль — объедини с новыми данными. "
+    "При противоречиях используй НОВЫЕ данные (они актуальнее).\n"
+    "4. Сохрани всю остальную информацию из старого профиля без потерь.\n"
+    "5. Верни ТОЛЬКО итоговый текст профиля, без комментариев и пояснений.\n"
+    "6. Пиши на русском. Формат — краткий структурированный текст от третьего лица."
+)
+
+
 async def _merge_profile(existing: str, new_text: str, user_id: int) -> str:
     """Слить новые данные с существующим профилем через AI."""
+    if existing:
+        user_content = f"СУЩЕСТВУЮЩИЙ ПРОФИЛЬ:\n{existing}\n\nНОВЫЕ СВЕДЕНИЯ:\n{new_text}"
+    else:
+        user_content = f"НОВЫЕ СВЕДЕНИЯ:\n{new_text}"
+
     result = await chat(
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Ты — редактор профиля пользователя. "
-                    "Тебе дан СУЩЕСТВУЮЩИЙ профиль и НОВЫЕ СВЕДЕНИЯ от пользователя.\n\n"
-                    "Правила:\n"
-                    "1. Объедини информацию: обнови/дополни существующий профиль новыми данными.\n"
-                    "2. Если новые данные ПРОТИВОРЕЧАТ старым — используй НОВЫЕ (они актуальнее).\n"
-                    "3. Сохрани всю остальную информацию из старого профиля без потерь.\n"
-                    "4. Верни ТОЛЬКО итоговый текст профиля, без комментариев и пояснений.\n"
-                    "5. Пиши на русском. Формат — свободный текст, структурированный и краткий."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"СУЩЕСТВУЮЩИЙ ПРОФИЛЬ:\n{existing}\n\n"
-                    f"НОВЫЕ СВЕДЕНИЯ:\n{new_text}"
-                ),
-            },
+            {"role": "system", "content": PROFILE_MERGE_SYSTEM},
+            {"role": "user", "content": user_content},
         ],
         task_type="general_chat",
         user_id=user_id,
@@ -745,10 +748,7 @@ async def _process_profile_psy(message: Message, user_id: int, text: str) -> Non
     user = await get_user(user_id)
     existing = (user or {}).get("system_prompt_overrides") or ""
 
-    if existing:
-        merged = await _merge_profile(existing, text, user_id)
-    else:
-        merged = text
+    merged = await _merge_profile(existing, text, user_id)
 
     await update_user_settings(user_id, merged)
     set_user_mode(user_id, Mode.DIARY)
