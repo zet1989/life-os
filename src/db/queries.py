@@ -1605,3 +1605,57 @@ async def get_work_summary_text(user_id: int, days: int = 7) -> str:
         lines.append(f"  [{st}] {dur} мин")
 
     return "\n".join(lines)
+
+
+# === Watch Tokens (HUAWEI Health Kit) ===
+
+async def get_watch_token(user_id: int) -> dict | None:
+    """Получить OAuth2 токены часов для пользователя."""
+    row = await get_pool().fetchrow(
+        "SELECT * FROM watch_tokens WHERE user_id = $1", user_id,
+    )
+    return dict(row) if row else None
+
+
+async def save_watch_token(
+    user_id: int,
+    access_token: str,
+    refresh_token: str,
+    expires_at: datetime,
+    device_name: str = "HUAWEI WATCH FIT 4 Pro",
+) -> None:
+    """Сохранить или обновить OAuth2 токены часов."""
+    await get_pool().execute(
+        """INSERT INTO watch_tokens (user_id, access_token, refresh_token, expires_at, device_name, updated_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (user_id) DO UPDATE
+        SET access_token = $2, refresh_token = $3, expires_at = $4, device_name = $5, updated_at = NOW()""",
+        user_id, access_token, refresh_token, expires_at, device_name,
+    )
+
+
+async def delete_watch_token(user_id: int) -> None:
+    """Удалить токены часов (отвязать)."""
+    await get_pool().execute("DELETE FROM watch_tokens WHERE user_id = $1", user_id)
+
+
+async def get_all_watch_users() -> list[dict]:
+    """Все пользователи с подключёнными часами."""
+    rows = await get_pool().fetch(
+        "SELECT * FROM watch_tokens ORDER BY user_id",
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_today_watch_metrics(user_id: int) -> list[dict]:
+    """Получить сегодняшние метрики с часов."""
+    rows = await get_pool().fetch(
+        """SELECT json_data, timestamp, raw_text FROM events
+        WHERE user_id = $1
+          AND event_type = 'watch_metrics'
+          AND bot_source = 'health'
+          AND timestamp >= CURRENT_DATE
+        ORDER BY timestamp DESC""",
+        user_id,
+    )
+    return [dict(r) for r in rows]

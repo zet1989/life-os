@@ -15,6 +15,7 @@ class Mode(StrEnum):
     PROFILE = "profile"
     WATER = "water"
     WEIGHT = "weight"
+    WATCH = "watch"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -22,7 +23,8 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="🍽 Еда"), KeyboardButton(text="🏋️ Тренировка")],
         [KeyboardButton(text="💧 Вода"), KeyboardButton(text="⚖️ Вес")],
-        [KeyboardButton(text="🩺 Доктор"), KeyboardButton(text="📋 Мой профиль")],
+        [KeyboardButton(text="🩺 Доктор"), KeyboardButton(text="⌚ Часы")],
+        [KeyboardButton(text="📋 Мой профиль")],
     ]
     from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
     if is_unified():

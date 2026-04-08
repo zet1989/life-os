@@ -1,15 +1,18 @@
-"""Инициализация Supabase-клиента."""
+"""Инициализация Supabase-клиента.
 
-from supabase import create_client, Client
+DEPRECATED: Проект мигрировал на прямое подключение через asyncpg.
+Этот модуль сохранён для совместимости на случай будущего использования
+Supabase REST API (Storage, Realtime).
+Для основных SQL-запросов используйте src/db/postgres.py + src/db/queries.py.
+"""
 
-from src.config import settings
+# from supabase import create_client, Client
+# from src.config import settings
 
-_client: Client | None = None
+# _client: Client | None = None
 
-
-def get_supabase() -> Client:
-    """Ленивая инициализация — клиент создаётся при первом вызове."""
-    global _client
-    if _client is None:
-        _client = create_client(settings.supabase_url, settings.supabase_key)
-    return _client
+# def get_supabase() -> Client:
+#     global _client
+#     if _client is None:
+#         _client = create_client(settings.supabase_url, settings.supabase_key)
+#     return _client

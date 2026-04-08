@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     obsidian_sync_enabled: bool = False
     obsidian_watch_enabled: bool = False
 
+    # --- HUAWEI Health Kit (смарт-часы) ---
+    huawei_client_id: str = ""
+    huawei_client_secret: str = ""
+
     # --- Free model limits ---
     free_model_daily_limit: int = 950  # запросов бесплатных моделей в день (с запасом от 1000 при $10+)
 

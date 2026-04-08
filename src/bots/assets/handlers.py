@@ -101,6 +101,7 @@ async def _init_project_ids() -> None:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, db_user: dict) -> None:
+    await _init_project_ids()
     name = db_user.get("display_name") or message.from_user.first_name  # type: ignore[union-attr]
     await message.answer(
         f"Привет, {name}! 🏠🚗\n"

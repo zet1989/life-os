@@ -55,6 +55,38 @@ async def _is_wife(user_id: int) -> bool:
     return (user or {}).get("role") == "wife"
 
 
+async def _watch_context(user_id: int) -> str:
+    """Собрать контекст данных с часов для AI-промптов."""
+    from src.db.queries import get_today_watch_metrics
+
+    metrics = await get_today_watch_metrics(user_id)
+    if not metrics:
+        return ""
+
+    last = metrics[0].get("json_data") or {}
+    parts = []
+    if "steps" in last:
+        parts.append(f"Шаги: {last['steps']}")
+    if "calories_burned" in last:
+        parts.append(f"Сожжено: {last['calories_burned']} ккал")
+    hr = last.get("heart_rate")
+    if hr:
+        parts.append(f"Пульс: {hr.get('avg', '?')} (мин {hr.get('min', '?')}, макс {hr.get('max', '?')})")
+    sp = last.get("spo2")
+    if sp:
+        parts.append(f"SpO2: {sp.get('avg', '?')}%")
+    st = last.get("stress")
+    if st:
+        parts.append(f"Стресс: {st.get('avg', '?')}/100")
+    sl = last.get("sleep")
+    if sl:
+        parts.append(f"Сон: {sl.get('total_hours', '?')}ч, глубокий {sl.get('deep_min', 0)} мин")
+
+    if not parts:
+        return ""
+    return "⌚ ДАННЫЕ ЧАСОВ СЕГОДНЯ:\n" + "\n".join(f"  {p}" for p in parts)
+
+
 async def _today_meals_context(user_id: int) -> str:
     """Собрать контекст сегодняшних приёмов пищи из БД."""
     meals = await get_today_meals(user_id, bot_source="health")
@@ -828,6 +860,7 @@ async def _process_doctor(message: Message, user_id: int, text: str) -> None:
     workouts_ctx = await _today_workouts_context(user_id)
     profile = await _get_user_settings(user_id)
     work_ctx = await get_work_summary_text(user_id, days=7)
+    watch_ctx = await _watch_context(user_id)
     system = DOCTOR_SYSTEM.format(
         current_time=_now_str(),
         today_meals_context=meals_ctx,
@@ -836,6 +869,8 @@ async def _process_doctor(message: Message, user_id: int, text: str) -> None:
     )
     if work_ctx:
         system += f"\n\n{work_ctx}"
+    if watch_ctx:
+        system += f"\n\n{watch_ctx}"
     messages = await build_messages(
         user_id=user_id,
         bot_source=BOT_SOURCE,
@@ -987,4 +1022,184 @@ def _extract_json(text: str) -> dict | None:
         end = text.rindex("}") + 1
         return json.loads(text[start:end])
     except (ValueError, json.JSONDecodeError):
+        return None
+
+
+# === ⌚ Часы (HUAWEI Health Kit) ===
+
+@router.message(F.text == "⌚ Часы")
+async def mode_watch(message: Message, db_user: dict) -> None:
+    """Показать текущие данные с часов или предложить подключить."""
+    from src.db.queries import get_watch_token, get_today_watch_metrics
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.WATCH)
+
+    token = await get_watch_token(user_id)
+    if not token:
+        await message.answer(
+            "⌚ <b>Смарт-часы не подключены</b>\n\n"
+            "Подключи HUAWEI WATCH для автоматического трекинга:\n"
+            "• 🫀 Пульс и SpO2\n"
+            "• 🚶 Шаги и калории\n"
+            "• 😴 Анализ сна\n"
+            "• 😰 Уровень стресса\n\n"
+            "Для подключения: /watch_connect",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    # Показать последние данные
+    metrics = await get_today_watch_metrics(user_id)
+    if not metrics:
+        await message.answer(
+            "⌚ Часы подключены, но сегодня данных пока нет.\n"
+            "Данные обновляются автоматически каждые 30 минут.\n\n"
+            "/watch_now — запросить данные сейчас\n"
+            "/watch_disconnect — отвязать часы",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    # Собрать сводку из последних метрик
+    last = metrics[0].get("json_data") or {}
+    text = "⌚ <b>Данные с часов сегодня</b>\n\n"
+
+    if "steps" in last:
+        text += f"🚶 Шаги: <b>{last['steps']}</b>\n"
+    if "distance_km" in last:
+        text += f"📏 Дистанция: <b>{last['distance_km']} км</b>\n"
+    if "calories_burned" in last:
+        text += f"🔥 Сожжено: <b>{last['calories_burned']} ккал</b>\n"
+
+    hr = last.get("heart_rate")
+    if hr:
+        text += f"🫀 Пульс: <b>{hr.get('avg', '?')}</b> (мин {hr.get('min', '?')}, макс {hr.get('max', '?')})\n"
+
+    sp = last.get("spo2")
+    if sp:
+        text += f"🩸 SpO2: <b>{sp.get('avg', '?')}%</b>\n"
+
+    st = last.get("stress")
+    if st:
+        level = st.get("avg", 0)
+        emoji = "😌" if level < 30 else "😐" if level < 60 else "😰"
+        text += f"{emoji} Стресс: <b>{level}/100</b>\n"
+
+    sl = last.get("sleep")
+    if sl:
+        text += (
+            f"\n😴 <b>Сон:</b> {sl.get('total_hours', '?')}ч\n"
+            f"  Глубокий: {sl.get('deep_min', 0)} мин\n"
+            f"  REM: {sl.get('rem_min', 0)} мин\n"
+            f"  Качество: {sl.get('quality_pct', '?')}%\n"
+        )
+
+    text += (
+        f"\n⏰ Обновлено: {metrics[0]['timestamp'].strftime('%H:%M') if hasattr(metrics[0]['timestamp'], 'strftime') else '?'}\n"
+        f"\n/watch_now — обновить сейчас\n"
+        f"/watch_disconnect — отвязать часы"
+    )
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+@router.message(Command("watch_connect"))
+async def cmd_watch_connect(message: Message, db_user: dict) -> None:
+    """Начать OAuth2 авторизацию с HUAWEI Health Kit."""
+    from src.integrations.huawei_health import get_huawei_client
+
+    client = get_huawei_client()
+    if not client:
+        await message.answer(
+            "⌚ Интеграция с HUAWEI Health Kit не настроена.\n"
+            "Нужно задать HUAWEI_CLIENT_ID и HUAWEI_CLIENT_SECRET в .env",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    from src.config import settings
+    redirect_uri = f"{settings.webhook_host}/huawei/callback" if settings.webhook_host else "https://localhost/huawei/callback"
+    auth_url = client.get_auth_url(redirect_uri)
+
+    await message.answer(
+        "⌚ <b>Подключение HUAWEI WATCH</b>\n\n"
+        "1. Перейди по ссылке ниже\n"
+        "2. Войди в HUAWEI ID\n"
+        "3. Разреши доступ к Health данным\n"
+        "4. Скопируй код из URL и отправь мне\n\n"
+        f'<a href="{auth_url}">🔗 Авторизоваться в HUAWEI Health</a>\n\n'
+        "После авторизации отправь мне код из адресной строки.",
+        reply_markup=main_keyboard(),
+        disable_web_page_preview=True,
+    )
+
+
+@router.message(Command("watch_now"))
+async def cmd_watch_now(message: Message, db_user: dict) -> None:
+    """Запросить данные с часов прямо сейчас."""
+    from src.db.queries import get_watch_token
+    from src.integrations.huawei_health import get_huawei_client
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    token = await get_watch_token(user_id)
+    if not token:
+        await message.answer("⌚ Часы не подключены. /watch_connect", reply_markup=main_keyboard())
+        return
+
+    client = get_huawei_client()
+    if not client:
+        await message.answer("⌚ HUAWEI Health Kit не настроен.", reply_markup=main_keyboard())
+        return
+
+    processing = await message.answer("⏳ Запрашиваю данные с часов...")
+
+    # Проверить/обновить токен
+    access_token = await _ensure_valid_token(user_id, token, client)
+    if not access_token:
+        await processing.edit_text("❌ Токен истёк. Переподключи часы: /watch_connect")
+        return
+
+    data = await client.pull_and_save(user_id, access_token)
+    if not data or len(data) <= 3:  # только source/period_start/period_end
+        await processing.edit_text("⌚ Нет новых данных с часов.")
+        return
+
+    from src.integrations.huawei_health import _format_summary
+    await processing.edit_text(f"✅ {_format_summary(data)}")
+
+
+@router.message(Command("watch_disconnect"))
+async def cmd_watch_disconnect(message: Message, db_user: dict) -> None:
+    """Отвязать часы."""
+    from src.db.queries import delete_watch_token
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    await delete_watch_token(user_id)
+    await message.answer("⌚ Часы отвязаны.", reply_markup=main_keyboard())
+
+
+async def _ensure_valid_token(user_id: int, token: dict, client) -> str | None:
+    """Проверить срок токена, обновить если нужно."""
+    from datetime import timezone as tz
+    from src.db.queries import save_watch_token
+
+    expires = token.get("expires_at")
+    if expires and hasattr(expires, "timestamp"):
+        if expires.timestamp() > datetime.now(tz.utc).timestamp() + 300:
+            return token["access_token"]
+
+    # Refresh
+    try:
+        new_tokens = await client.refresh_access_token(token["refresh_token"])
+        expires_in = new_tokens.get("expires_in", 3600)
+        new_expires = datetime.now(tz.utc) + __import__("datetime").timedelta(seconds=expires_in)
+        await save_watch_token(
+            user_id=user_id,
+            access_token=new_tokens["access_token"],
+            refresh_token=new_tokens.get("refresh_token", token["refresh_token"]),
+            expires_at=new_expires,
+        )
+        return new_tokens["access_token"]
+    except Exception:
+        logger.warning("watch_token_refresh_failed", user_id=user_id)
         return None

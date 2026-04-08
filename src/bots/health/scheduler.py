@@ -328,6 +328,15 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # HUAWEI Watch — pull данных каждые 30 мин
+    scheduler.add_job(
+        pull_watch_data,
+        trigger=CronTrigger(minute="*/30", timezone=MSK),
+        args=[bot],
+        id="watch_data_pull",
+        replace_existing=True,
+    )
+
     return scheduler
 
 
@@ -374,3 +383,56 @@ async def _check_medications_for_user(bot: Bot, user_id: int, current_time: str)
                 await safe_send(bot, user_id, text, reply_markup=kb)
     except Exception:
         logger.exception("medication_check_failed", user_id=user_id)
+
+
+# === HUAWEI Watch — автоматический pull данных ===
+
+async def pull_watch_data(bot: Bot) -> None:
+    """Запросить данные со смарт-часов всех подключённых пользователей."""
+    from src.integrations.huawei_health import get_huawei_client
+    from src.db.queries import get_all_watch_users
+
+    client = get_huawei_client()
+    if not client:
+        return  # HUAWEI не настроен — skip
+
+    try:
+        users = await get_all_watch_users()
+        for wt in users:
+            await _pull_watch_for_user(bot, wt, client)
+    except Exception:
+        logger.exception("watch_pull_failed")
+
+
+async def _pull_watch_for_user(bot: Bot, watch_token: dict, client) -> None:
+    """Pull данных для одного пользователя."""
+    user_id = watch_token["user_id"]
+    try:
+        # Проверить/обновить токен
+        from datetime import timezone as tz
+        from src.db.queries import save_watch_token
+
+        expires = watch_token.get("expires_at")
+        access_token = watch_token["access_token"]
+
+        if expires and hasattr(expires, "timestamp"):
+            if expires.timestamp() < datetime.now(tz.utc).timestamp() + 300:
+                # Нужен refresh
+                try:
+                    new_tokens = await client.refresh_access_token(watch_token["refresh_token"])
+                    expires_in = new_tokens.get("expires_in", 3600)
+                    new_expires = datetime.now(tz.utc) + timedelta(seconds=expires_in)
+                    await save_watch_token(
+                        user_id=user_id,
+                        access_token=new_tokens["access_token"],
+                        refresh_token=new_tokens.get("refresh_token", watch_token["refresh_token"]),
+                        expires_at=new_expires,
+                    )
+                    access_token = new_tokens["access_token"]
+                except Exception:
+                    logger.warning("watch_refresh_skip", user_id=user_id)
+                    return
+
+        await client.pull_and_save(user_id, access_token)
+    except Exception:
+        logger.exception("watch_pull_user_failed", user_id=user_id)
