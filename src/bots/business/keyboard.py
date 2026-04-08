@@ -21,13 +21,14 @@ class Mode(StrEnum):
     PROJECTS = "projects"
     REPORT = "report"
     ADD_PROJECT = "add_project"
+    TIMER = "timer"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="💡 Идея"), KeyboardButton(text="📋 Задача")],
         [KeyboardButton(text="📁 Проекты"), KeyboardButton(text="📊 Отчёт")],
-        [KeyboardButton(text="➕ Новый проект")],
+        [KeyboardButton(text="⏱ Таймер"), KeyboardButton(text="➕ Новый проект")],
     ]
     from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
     if is_unified():

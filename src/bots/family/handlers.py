@@ -34,11 +34,6 @@ from src.db.queries import (
     close_debt,
     delete_debt,
     get_debts_summary,
-    get_active_work_session,
-    start_work_session,
-    stop_work_session,
-    get_work_stats,
-    get_work_sessions,
 )
 from src.bots.family.keyboard import (
     Mode,
@@ -107,7 +102,6 @@ async def cmd_start(message: Message, db_user: dict) -> None:
         f"📊 Отчёт — сводка за период\n"
         f"📈 Категории — куда уходят деньги\n"
         f"💳 Долги — долги и кредиты\n"
-        f"⏱ Таймер — учёт рабочего времени\n"
         f"🧠 Советник — финансовые советы AI\n"
         f"⚙️ Настройки — бюджетные лимиты\n\n"
         f"Также можно просто отправить фото чека!",
@@ -462,148 +456,6 @@ async def mode_advisor(message: Message, db_user: dict) -> None:
 
     await safe_edit(processing, f"🧠 <b>Финансовый советник</b>\n\n{advice}")
     await save_assistant_reply(user_id, BOT_SOURCE, advice)
-
-
-# === ⏱ Таймер — учёт рабочего времени ===
-
-@router.message(F.text == "⏱ Таймер")
-async def mode_timer(message: Message, db_user: dict) -> None:
-    user_id = message.from_user.id  # type: ignore[union-attr]
-    set_user_mode(user_id, Mode.TIMER)
-    active = await get_active_work_session(user_id)
-
-    if active:
-        start = active["start_time"]
-        if hasattr(start, "strftime"):
-            start_str = start.strftime("%H:%M")
-        else:
-            start_str = str(start)
-        # Вычислим прошедшее время
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        now = datetime.now(ZoneInfo("Europe/Moscow"))
-        if hasattr(active["start_time"], "timestamp"):
-            elapsed = int((now - active["start_time"]).total_seconds() // 60)
-        else:
-            elapsed = 0
-        elapsed_h, elapsed_m = divmod(elapsed, 60)
-        await message.answer(
-            f"⏱ <b>Таймер запущен</b> с {start_str}\n"
-            f"⏳ Прошло: {elapsed_h}ч {elapsed_m}мин\n\n"
-            f"⏹ Остановить: /stop",
-            reply_markup=main_keyboard(),
-        )
-    else:
-        await message.answer(
-            "⏱ <b>Учёт рабочего времени</b>\n\n"
-            "▶️ Начать: /work\n"
-            "⏹ Закончить: /stop\n"
-            "📊 Статистика: /workstats\n\n"
-            "Данные доступны психологу и доктору.",
-            reply_markup=main_keyboard(),
-        )
-
-
-@router.message(Command("work"))
-async def cmd_work_start(message: Message, db_user: dict) -> None:
-    user_id = message.from_user.id  # type: ignore[union-attr]
-    session = await start_work_session(user_id)
-    start = session["start_time"]
-    if hasattr(start, "strftime"):
-        start_str = start.strftime("%H:%M")
-    else:
-        start_str = str(start)
-    await message.answer(
-        f"▶️ <b>Работа начата</b> в {start_str}\n\n"
-        f"Когда закончишь — нажми /stop",
-        reply_markup=main_keyboard(),
-    )
-
-
-@router.message(Command("stop"))
-async def cmd_work_stop(message: Message, db_user: dict) -> None:
-    user_id = message.from_user.id  # type: ignore[union-attr]
-    session = await stop_work_session(user_id)
-    if not session:
-        await message.answer(
-            "❌ Нет активного таймера.\nНачать: /work",
-            reply_markup=main_keyboard(),
-        )
-        return
-
-    dur = session.get("duration_minutes") or 0
-    h, m = divmod(dur, 60)
-    start = session["start_time"]
-    end = session["end_time"]
-    if hasattr(start, "strftime"):
-        start_str = start.strftime("%H:%M")
-        end_str = end.strftime("%H:%M")
-    else:
-        start_str, end_str = str(start), str(end)
-
-    await message.answer(
-        f"⏹ <b>Работа завершена</b>\n\n"
-        f"🕐 {start_str} → {end_str}\n"
-        f"⏱ Длительность: <b>{h}ч {m}мин</b>",
-        reply_markup=main_keyboard(),
-    )
-
-
-@router.message(Command("workstats"))
-async def cmd_workstats(message: Message, db_user: dict) -> None:
-    user_id = message.from_user.id  # type: ignore[union-attr]
-
-    # Недельная статистика
-    week = await get_work_stats(user_id, days=7)
-    month = await get_work_stats(user_id, days=30)
-    sessions = await get_work_sessions(user_id, days=7)
-
-    if week["sessions"] == 0 and month["sessions"] == 0:
-        await message.answer(
-            "📊 Нет данных о рабочем времени.\n"
-            "Начни с /work",
-            reply_markup=main_keyboard(),
-        )
-        return
-
-    text = "📊 <b>Статистика рабочего времени</b>\n\n"
-
-    # Недельная
-    w_total_h, w_total_m = divmod(int(week["total_minutes"]), 60)
-    w_avg = int(week["avg_minutes"])
-    w_avg_h, w_avg_m = divmod(w_avg, 60)
-    text += (
-        f"📅 <b>Неделя:</b>\n"
-        f"  Сессий: {week['sessions']}, рабочих дней: {week['work_days']}\n"
-        f"  Всего: <b>{w_total_h}ч {w_total_m}мин</b>\n"
-        f"  Среднее: {w_avg_h}ч {w_avg_m}мин/сессия\n\n"
-    )
-
-    # Месячная
-    m_total_h, m_total_m = divmod(int(month["total_minutes"]), 60)
-    m_avg = int(month["avg_minutes"])
-    m_avg_h, m_avg_m = divmod(m_avg, 60)
-    text += (
-        f"📆 <b>Месяц:</b>\n"
-        f"  Сессий: {month['sessions']}, рабочих дней: {month['work_days']}\n"
-        f"  Всего: <b>{m_total_h}ч {m_total_m}мин</b>\n"
-        f"  Среднее: {m_avg_h}ч {m_avg_m}мин/сессия\n\n"
-    )
-
-    # Последние сессии
-    if sessions:
-        text += "🕐 <b>Последние сессии:</b>\n"
-        for s in sessions[:7]:
-            st = s["start_time"]
-            dur = s.get("duration_minutes") or 0
-            dh, dm = divmod(dur, 60)
-            if hasattr(st, "strftime"):
-                st_str = st.strftime("%d.%m %H:%M")
-            else:
-                st_str = str(st)
-            text += f"  [{st_str}] {dh}ч {dm}мин\n"
-
-    await message.answer(text, reply_markup=main_keyboard())
 
 
 # === 📉 Графики ===
@@ -1264,7 +1116,7 @@ async def handle_text(message: Message, bot: Bot, db_user: dict) -> None:
 async def _process_input(message: Message, user_id: int, text: str) -> None:
     mode = get_user_mode(user_id)
 
-    if mode in (Mode.SETTINGS, Mode.REPORT, Mode.CATEGORIES, Mode.CHARTS, Mode.ADVISOR, Mode.TIMER):
+    if mode in (Mode.SETTINGS, Mode.REPORT, Mode.CATEGORIES, Mode.CHARTS, Mode.ADVISOR):
         await message.answer(
             "Выбери действие на клавиатуре ниже 👇",
             reply_markup=main_keyboard(),

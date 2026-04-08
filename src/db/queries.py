@@ -1561,7 +1561,10 @@ async def get_work_summary_text(user_id: int, days: int = 7) -> str:
     for s in sessions[:5]:
         st = s["start_time"]
         dur = s.get("duration_minutes") or 0
-        if hasattr(st, "strftime"):
+        if hasattr(st, "astimezone"):
+            from zoneinfo import ZoneInfo
+            st = st.astimezone(ZoneInfo("Europe/Moscow")).strftime("%d.%m %H:%M")
+        elif hasattr(st, "strftime"):
             st = st.strftime("%d.%m %H:%M")
         lines.append(f"  [{st}] {dur} мин")
 
