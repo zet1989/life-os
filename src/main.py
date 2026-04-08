@@ -36,8 +36,11 @@ logger = structlog.get_logger()
 
 def _collect_unified() -> dict:
     """Собрать unified-бота: один токен, все секции через SectionFilter."""
+    from src.bots.hub.keyboard import set_unified_mode
     from src.bots.hub.handlers import router as hub_router
     from src.bots.hub.section_filter import SectionFilter
+
+    set_unified_mode()  # включить кнопку 🏠 Меню в клавиатурах секций
 
     routers: list[Router] = [hub_router]  # Hub первый — ловит /start, 🏠 Меню
     scheduler_factories = []

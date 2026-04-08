@@ -46,14 +46,15 @@ def pop_pending_prompt_project(user_id: int) -> int | None:
 
 def main_keyboard() -> ReplyKeyboardMarkup:
     """Главная клавиатура Master-бота."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="📋 Задачи")],
-            [KeyboardButton(text="🎯 Фокус дня"), KeyboardButton(text="🎯 Цели и Мечты")],
-            [KeyboardButton(text="⚙️ Проекты"), KeyboardButton(text="📊 Сводный отчёт")],
-            [KeyboardButton(text="💰 Финансовая панорама"), KeyboardButton(text="🤖 AI Панель")],
-            [KeyboardButton(text="📋 Промпты"), KeyboardButton(text="➕ Цель")],
-            [KeyboardButton(text="📊 Графики"), KeyboardButton(text="ℹ️ Статус")],
-        ],
-        resize_keyboard=True,
-    )
+    rows = [
+        [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="📋 Задачи")],
+        [KeyboardButton(text="🎯 Фокус дня"), KeyboardButton(text="🎯 Цели и Мечты")],
+        [KeyboardButton(text="⚙️ Проекты"), KeyboardButton(text="📊 Сводный отчёт")],
+        [KeyboardButton(text="💰 Финансовая панорама"), KeyboardButton(text="🤖 AI Панель")],
+        [KeyboardButton(text="📋 Промпты"), KeyboardButton(text="➕ Цель")],
+        [KeyboardButton(text="📊 Графики"), KeyboardButton(text="ℹ️ Статус")],
+    ]
+    from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
+    if is_unified():
+        rows.append([KeyboardButton(text=MENU_BUTTON_TEXT)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)

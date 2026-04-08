@@ -24,14 +24,15 @@ class Mode(StrEnum):
 
 def main_keyboard() -> ReplyKeyboardMarkup:
     """Основная Reply-клавиатура бота Assets."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📐 Замер"), KeyboardButton(text="🧾 Чек")],
-            [KeyboardButton(text="🔧 ТО"), KeyboardButton(text="⚙️ Запчасть")],
-            [KeyboardButton(text="🗓 План дома"), KeyboardButton(text="❓ Спросить")],
-        ],
-        resize_keyboard=True,
-    )
+    rows = [
+        [KeyboardButton(text="📐 Замер"), KeyboardButton(text="🧾 Чек")],
+        [KeyboardButton(text="🔧 ТО"), KeyboardButton(text="⚙️ Запчасть")],
+        [KeyboardButton(text="🗓 План дома"), KeyboardButton(text="❓ Спросить")],
+    ]
+    from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
+    if is_unified():
+        rows.append([KeyboardButton(text=MENU_BUTTON_TEXT)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def inline_category() -> InlineKeyboardMarkup:

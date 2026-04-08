@@ -35,6 +35,21 @@ LABEL_TO_SECTION: dict[str, Section] = {v: k for k, v in SECTION_LABELS.items()}
 # Кнопка возврата в главное меню (добавляется в каждую секционную клавиатуру)
 MENU_BUTTON_TEXT = "🏠 Меню"
 
+# Флаг единого бота (включается в main.py)
+_unified_mode = False
+
+
+def is_unified() -> bool:
+    """Работает ли бот в unified-режиме."""
+    return _unified_mode
+
+
+def set_unified_mode() -> None:
+    """Включить unified-режим (добавляет кнопку Меню в клавиатуры)."""
+    global _unified_mode
+    _unified_mode = True
+
+
 # In-memory: текущая секция пользователя (None = главное меню)
 _user_sections: dict[int, Section | None] = {}
 

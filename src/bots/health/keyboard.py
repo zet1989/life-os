@@ -19,14 +19,15 @@ class Mode(StrEnum):
 
 def main_keyboard() -> ReplyKeyboardMarkup:
     """Основная Reply-клавиатура бота Health."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🍽 Еда"), KeyboardButton(text="🏋️ Тренировка")],
-            [KeyboardButton(text="💧 Вода"), KeyboardButton(text="⚖️ Вес")],
-            [KeyboardButton(text="🩺 Доктор"), KeyboardButton(text="📋 Мой профиль")],
-        ],
-        resize_keyboard=True,
-    )
+    rows = [
+        [KeyboardButton(text="🍽 Еда"), KeyboardButton(text="🏋️ Тренировка")],
+        [KeyboardButton(text="💧 Вода"), KeyboardButton(text="⚖️ Вес")],
+        [KeyboardButton(text="🩺 Доктор"), KeyboardButton(text="📋 Мой профиль")],
+    ]
+    from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
+    if is_unified():
+        rows.append([KeyboardButton(text=MENU_BUTTON_TEXT)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def get_user_mode(user_id: int) -> Mode:

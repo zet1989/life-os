@@ -708,14 +708,54 @@ async def _show_profile_psy(message: Message, user_id: int) -> None:
     await message.answer(text, reply_markup=main_keyboard())
 
 
+async def _merge_profile(existing: str, new_text: str, user_id: int) -> str:
+    """Слить новые данные с существующим профилем через AI."""
+    result = await chat(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Ты — редактор профиля пользователя. "
+                    "Тебе дан СУЩЕСТВУЮЩИЙ профиль и НОВЫЕ СВЕДЕНИЯ от пользователя.\n\n"
+                    "Правила:\n"
+                    "1. Объедини информацию: обнови/дополни существующий профиль новыми данными.\n"
+                    "2. Если новые данные ПРОТИВОРЕЧАТ старым — используй НОВЫЕ (они актуальнее).\n"
+                    "3. Сохрани всю остальную информацию из старого профиля без потерь.\n"
+                    "4. Верни ТОЛЬКО итоговый текст профиля, без комментариев и пояснений.\n"
+                    "5. Пиши на русском. Формат — свободный текст, структурированный и краткий."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"СУЩЕСТВУЮЩИЙ ПРОФИЛЬ:\n{existing}\n\n"
+                    f"НОВЫЕ СВЕДЕНИЯ:\n{new_text}"
+                ),
+            },
+        ],
+        task_type="general_chat",
+        user_id=user_id,
+        bot_source=BOT_SOURCE,
+    )
+    return result.strip()
+
+
 async def _process_profile_psy(message: Message, user_id: int, text: str) -> None:
-    """Сохранение профиля пользователя."""
-    await update_user_settings(user_id, text)
+    """Сохранение профиля пользователя через AI-мерж с существующими данными."""
+    user = await get_user(user_id)
+    existing = (user or {}).get("system_prompt_overrides") or ""
+
+    if existing:
+        merged = await _merge_profile(existing, text, user_id)
+    else:
+        merged = text
+
+    await update_user_settings(user_id, merged)
     set_user_mode(user_id, Mode.DIARY)
 
     await message.answer(
         "✅ Профиль обновлён!\n\n"
-        f"<i>{text[:500]}</i>\n\n"
+        f"<i>{merged[:500]}</i>\n\n"
         "Буду учитывать в терапевтической работе.\n"
         "Профиль общий для 🏥 Здоровье и 🧠 Психолог.",
         reply_markup=main_keyboard(),

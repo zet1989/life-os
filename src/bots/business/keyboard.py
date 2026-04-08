@@ -24,14 +24,15 @@ class Mode(StrEnum):
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="💡 Идея"), KeyboardButton(text="📋 Задача")],
-            [KeyboardButton(text="📁 Проекты"), KeyboardButton(text="📊 Отчёт")],
-            [KeyboardButton(text="➕ Новый проект")],
-        ],
-        resize_keyboard=True,
-    )
+    rows = [
+        [KeyboardButton(text="💡 Идея"), KeyboardButton(text="📋 Задача")],
+        [KeyboardButton(text="📁 Проекты"), KeyboardButton(text="📊 Отчёт")],
+        [KeyboardButton(text="➕ Новый проект")],
+    ]
+    from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
+    if is_unified():
+        rows.append([KeyboardButton(text=MENU_BUTTON_TEXT)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def projects_inline(projects: list[dict], action: str = "select") -> InlineKeyboardMarkup:

@@ -30,40 +30,28 @@ class _NoSectionFilter(BaseFilter):
         return False
 
 
-# Импорт клавиатур секций (ленивый, чтобы не циклить импорты)
-_SECTION_KEYBOARDS = {}
-
-
 def _get_section_keyboard(section: Section):
-    """Получить клавиатуру секции с кнопкой 🏠 Меню."""
-    if section not in _SECTION_KEYBOARDS:
-        from aiogram.types import KeyboardButton
+    """Получить клавиатуру секции (с кнопкой 🏠 Меню, если unified mode)."""
+    if section == Section.HEALTH:
+        from src.bots.health.keyboard import main_keyboard
+    elif section == Section.ASSETS:
+        from src.bots.assets.keyboard import main_keyboard
+    elif section == Section.BUSINESS:
+        from src.bots.business.keyboard import main_keyboard
+    elif section == Section.PARTNER:
+        from src.bots.partner.keyboard import main_keyboard
+    elif section == Section.MENTOR:
+        from src.bots.mentor.keyboard import main_keyboard
+    elif section == Section.FAMILY:
+        from src.bots.family.keyboard import main_keyboard
+    elif section == Section.PSYCHOLOGY:
+        from src.bots.psychology.keyboard import main_keyboard
+    elif section == Section.MASTER:
+        from src.bots.master.keyboard import main_keyboard
+    else:
+        return None
 
-        if section == Section.HEALTH:
-            from src.bots.health.keyboard import main_keyboard
-        elif section == Section.ASSETS:
-            from src.bots.assets.keyboard import main_keyboard
-        elif section == Section.BUSINESS:
-            from src.bots.business.keyboard import main_keyboard
-        elif section == Section.PARTNER:
-            from src.bots.partner.keyboard import main_keyboard
-        elif section == Section.MENTOR:
-            from src.bots.mentor.keyboard import main_keyboard
-        elif section == Section.FAMILY:
-            from src.bots.family.keyboard import main_keyboard
-        elif section == Section.PSYCHOLOGY:
-            from src.bots.psychology.keyboard import main_keyboard
-        elif section == Section.MASTER:
-            from src.bots.master.keyboard import main_keyboard
-        else:
-            return None
-
-        kb = main_keyboard()
-        # Добавляем кнопку "🏠 Меню" в последний ряд
-        kb.keyboard.append([KeyboardButton(text=MENU_BUTTON_TEXT)])
-        _SECTION_KEYBOARDS[section] = kb
-
-    return _SECTION_KEYBOARDS[section]
+    return main_keyboard()
 
 
 # --- /start ---

@@ -34,16 +34,17 @@ def set_user_mode(user_id: int, mode: Mode) -> None:
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="🎙 Голос")],
-            [KeyboardButton(text="✅ Привычки"), KeyboardButton(text="😊 Настроение")],
-            [KeyboardButton(text="⚡ Энергия"), KeyboardButton(text="🙏 Благодарности")],
-            [KeyboardButton(text="🔮 Ретроспектива"), KeyboardButton(text="➕ Привычка")],
-            [KeyboardButton(text="📋 Мой профиль")],
-        ],
-        resize_keyboard=True,
-    )
+    rows = [
+        [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="🎙 Голос")],
+        [KeyboardButton(text="✅ Привычки"), KeyboardButton(text="😊 Настроение")],
+        [KeyboardButton(text="⚡ Энергия"), KeyboardButton(text="🙏 Благодарности")],
+        [KeyboardButton(text="🔮 Ретроспектива"), KeyboardButton(text="➕ Привычка")],
+        [KeyboardButton(text="📋 Мой профиль")],
+    ]
+    from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
+    if is_unified():
+        rows.append([KeyboardButton(text=MENU_BUTTON_TEXT)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def habits_inline(habits: list[dict]) -> InlineKeyboardMarkup:
