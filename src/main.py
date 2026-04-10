@@ -30,6 +30,20 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
+def _make_bot(token: str) -> Bot:
+    """Создать Bot-инстанс с прокси (если настроен TELEGRAM_PROXY)."""
+    session = None
+    if settings.telegram_proxy:
+        from aiogram.client.session.aiohttp import AiohttpSession
+        session = AiohttpSession(proxy=settings.telegram_proxy)
+        logger.info("bot_proxy_enabled", proxy=settings.telegram_proxy)
+    return Bot(
+        token=token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        session=session,
+    )
+
+
 # ─────────────────────────────────────────────────────────
 #  Unified mode — единый бот-хаб
 # ─────────────────────────────────────────────────────────
@@ -106,10 +120,7 @@ async def _run_unified_polling() -> None:
     """Запуск единого бота в режиме Long Polling."""
     cfg = _collect_unified()
 
-    bot = Bot(
-        token=cfg["token"],
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = _make_bot(cfg["token"])
     dp = Dispatcher()
     dp.update.middleware(ACLMiddleware(bot_name="unified"))
 
@@ -138,10 +149,7 @@ async def _run_unified_webhook(app, instances, schedulers) -> None:
 
     cfg = _collect_unified()
 
-    bot = Bot(
-        token=cfg["token"],
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = _make_bot(cfg["token"])
     dp = Dispatcher()
     dp.update.middleware(ACLMiddleware(bot_name="unified"))
 
@@ -190,10 +198,7 @@ async def _run_bot(
     scheduler_factory=None,
 ) -> None:
     """Запуск одного бота в режиме Long Polling (dev)."""
-    bot = Bot(
-        token=token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = _make_bot(token)
     dp = Dispatcher()
     dp.update.middleware(ACLMiddleware(bot_name=bot_name))
     dp.include_router(router)
@@ -218,10 +223,7 @@ def _create_bot_dp(
     router,
 ) -> tuple[Bot, Dispatcher]:
     """Создать Bot + Dispatcher (для webhook-режима)."""
-    bot = Bot(
-        token=token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = _make_bot(token)
     dp = Dispatcher()
     dp.update.middleware(ACLMiddleware(bot_name=bot_name))
     dp.include_router(router)

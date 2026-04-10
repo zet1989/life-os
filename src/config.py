@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     huawei_client_id: str = ""
     huawei_client_secret: str = ""
 
+    # --- Telegram proxy (SOCKS5 через xray для обхода блокировки) ---
+    telegram_proxy: str = ""  # например socks5://127.0.0.1:10808
+
     # --- Free model limits ---
     free_model_daily_limit: int = 950  # запросов бесплатных моделей в день (с запасом от 1000 при $10+)
 

@@ -3,6 +3,8 @@ services:
     build: .
     env_file: .env
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8443:8443"
     depends_on:
