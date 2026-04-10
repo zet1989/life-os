@@ -53,6 +53,7 @@ from src.bots.business.prompts import (
     build_business_system,
 )
 from src.integrations.obsidian.writer import obsidian
+from src.bots.hub.keyboard import Section, set_current_section
 
 logger = structlog.get_logger()
 router = Router()
@@ -514,6 +515,7 @@ async def cb_work_start_custom(callback: CallbackQuery) -> None:
     if not _is_timer_allowed(user_id):
         await callback.answer("Недоступно")
         return
+    set_current_section(user_id, Section.BUSINESS)
     set_user_mode(user_id, Mode.TIMER_SET_START)
     await callback.answer()
     if callback.message:
@@ -546,6 +548,7 @@ async def cb_work_stop_custom(callback: CallbackQuery) -> None:
     if not _is_timer_allowed(user_id):
         await callback.answer("Недоступно")
         return
+    set_current_section(user_id, Section.BUSINESS)
     set_user_mode(user_id, Mode.TIMER_SET_STOP)
     await callback.answer()
     if callback.message:
