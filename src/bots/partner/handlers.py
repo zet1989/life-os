@@ -5,6 +5,7 @@
 """
 
 import json
+import re
 
 import structlog
 from aiogram import Bot, F, Router
@@ -332,7 +333,9 @@ async def _attach_finance(callback: CallbackQuery, user_id: int, project_id: int
     else:
         await callback.answer("⚠️ Не удалось распарсить")
         if callback.message:
-            await callback.message.answer(result, reply_markup=main_keyboard())  # type: ignore[union-attr]
+            cleaned = re.sub(r'```json\s*\{.*?\}\s*```', '', result, flags=re.DOTALL).strip()
+            cleaned = re.sub(r'\{[^{}]*"amount"\s*:.*?\}', '', cleaned, flags=re.DOTALL).strip()
+            await callback.message.answer(cleaned or "⚠️ Не удалось распознать сумму. Попробуй ещё раз.", reply_markup=main_keyboard())  # type: ignore[union-attr]
 
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
@@ -527,7 +530,9 @@ async def _attach_finance_direct(
         )
         await message.answer(confirm, reply_markup=main_keyboard())
     else:
-        await safe_answer(message, result, reply_markup=main_keyboard())
+        cleaned = re.sub(r'```json\s*\{.*?\}\s*```', '', result, flags=re.DOTALL).strip()
+        cleaned = re.sub(r'\{[^{}]*"amount"\s*:.*?\}', '', cleaned, flags=re.DOTALL).strip()
+        await safe_answer(message, cleaned or "⚠️ Не удалось распознать сумму. Попробуй ещё раз.", reply_markup=main_keyboard())
 
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 

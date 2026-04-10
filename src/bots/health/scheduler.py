@@ -292,10 +292,10 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Создать и запустить планировщик с дневной/недельной/месячной сводкой."""
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 
-    # Ежедневно в 21:00 MSK
+    # Ежедневно в 21:30 MSK
     scheduler.add_job(
         send_daily_summary,
-        trigger=CronTrigger(hour=21, minute=0, timezone=MSK),
+        trigger=CronTrigger(hour=21, minute=30, timezone=MSK),
         args=[bot],
         id="daily_kbzhu_summary",
         replace_existing=True,

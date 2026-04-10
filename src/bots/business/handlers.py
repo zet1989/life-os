@@ -1,6 +1,7 @@
 """Хэндлеры бота Business — мульти-проектный бизнес-ассистент."""
 
 import json
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -294,7 +295,8 @@ async def _attach_to_project(callback: CallbackQuery, user_id: int, project_id: 
 
     await callback.answer("✅ Сохранено")
     if callback.message:
-        await callback.message.answer(result, reply_markup=main_keyboard())  # type: ignore[union-attr]
+        display = _format_business_response(result, json_data)
+        await callback.message.answer(display, reply_markup=main_keyboard())  # type: ignore[union-attr]
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -765,7 +767,8 @@ async def _attach_to_project_direct(
         evts = await get_project_events(project_id, limit=10)
         await obsidian.update_project_readme(proj, fin, evts)
 
-    await safe_answer_voice(message, result, user_id, reply_markup=main_keyboard())
+    display = _format_business_response(result, json_data)
+    await safe_answer_voice(message, display, user_id, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
@@ -798,3 +801,42 @@ def _extract_json(text: str) -> dict | None:
         return json.loads(text[start:end])
     except (ValueError, json.JSONDecodeError):
         return None
+
+
+def _format_business_response(raw_result: str, json_data: dict | None) -> str:
+    """Форматировать ответ бизнес-бота: убрать JSON, построить карточку."""
+    if not json_data:
+        # Нет JSON — чистим остатки и показываем текст
+        cleaned = re.sub(r'```json\s*\{.*?\}\s*```', '', raw_result, flags=re.DOTALL).strip()
+        return cleaned or raw_result
+
+    entry_type = json_data.get("type", "idea")
+    title = json_data.get("title", "")
+    desc = json_data.get("description", "")
+    priority = json_data.get("priority", "")
+    first_step = json_data.get("first_step", "")
+
+    if entry_type == "task":
+        emoji = "📋"
+        label = "Задача"
+    else:
+        emoji = "💡"
+        label = "Идея"
+
+    card = f"{emoji} <b>{label}:</b> {title}\n"
+    if desc:
+        card += f"\n{desc}\n"
+    if priority:
+        prio_map = {"high": "🔴 высокий", "medium": "🟡 средний", "low": "🟢 низкий"}
+        card += f"\n📌 Приоритет: {prio_map.get(priority, priority)}"
+    if first_step:
+        card += f"\n\n🚀 <b>Первый шаг:</b> {first_step}"
+
+    # Добавим текст от LLM после JSON (если есть сводка)
+    after_json = re.sub(r'```json\s*\{.*?\}\s*```', '', raw_result, flags=re.DOTALL).strip()
+    # Убираем JSON-подобные блоки без тройных кавычек
+    after_json = re.sub(r'\{[^{}]*"type"\s*:.*?\}', '', after_json, flags=re.DOTALL).strip()
+    if after_json and after_json not in card:
+        card += f"\n\n{after_json}"
+
+    return card
