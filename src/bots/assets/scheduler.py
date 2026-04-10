@@ -1,5 +1,7 @@
 """Планировщик напоминаний по пробегу для бота Assets."""
 
+from zoneinfo import ZoneInfo
+
 import structlog
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -100,7 +102,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(
         check_mileage_reminders,
-        trigger=CronTrigger(day_of_week="sun", hour=10, minute=0),
+        trigger=CronTrigger(day_of_week="sun", hour=10, minute=0, timezone=ZoneInfo("Europe/Moscow")),
         args=[bot],
         id="mileage_reminder",
         replace_existing=True,

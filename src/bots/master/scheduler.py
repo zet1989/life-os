@@ -20,6 +20,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+MSK = ZoneInfo("Europe/Moscow")
+
 from src.ai.rag import search
 from src.ai.router import chat
 from src.db.queries import (
@@ -229,7 +231,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Ежемесячный аудит — 1-го числа в 10:00
     scheduler.add_job(
         send_monthly_audit,
-        trigger=CronTrigger(day=1, hour=10, minute=0),
+        trigger=CronTrigger(day=1, hour=10, minute=0, timezone=MSK),
         args=[bot],
         id="monthly_life_audit",
         replace_existing=True,
@@ -238,7 +240,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Квартальный OKR — 1-го числа Jan/Apr/Jul/Oct в 10:30
     scheduler.add_job(
         send_quarterly_audit,
-        trigger=CronTrigger(month="1,4,7,10", day=1, hour=10, minute=30),
+        trigger=CronTrigger(month="1,4,7,10", day=1, hour=10, minute=30, timezone=MSK),
         args=[bot],
         id="quarterly_okr_audit",
         replace_existing=True,
@@ -247,7 +249,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Утренний брифинг — 08:00 каждый день
     scheduler.add_job(
         send_morning_briefing,
-        trigger=CronTrigger(hour=8, minute=0),
+        trigger=CronTrigger(hour=8, minute=0, timezone=MSK),
         args=[bot],
         id="morning_briefing",
         replace_existing=True,
@@ -256,7 +258,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Вечерний обзор — 18:00 каждый день
     scheduler.add_job(
         send_evening_review,
-        trigger=CronTrigger(hour=18, minute=0),
+        trigger=CronTrigger(hour=18, minute=0, timezone=MSK),
         args=[bot],
         id="evening_review",
         replace_existing=True,
@@ -283,7 +285,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Автобэкап PostgreSQL — 03:00 каждый день
     scheduler.add_job(
         run_pg_backup,
-        trigger=CronTrigger(hour=3, minute=0),
+        trigger=CronTrigger(hour=3, minute=0, timezone=MSK),
         id="pg_backup",
         replace_existing=True,
     )
@@ -291,7 +293,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Повторяющиеся задачи — 06:00 каждый день (до утреннего брифинга)
     scheduler.add_job(
         spawn_recurring_tasks,
-        trigger=CronTrigger(hour=6, minute=0),
+        trigger=CronTrigger(hour=6, minute=0, timezone=MSK),
         id="recurring_tasks",
         replace_existing=True,
     )
@@ -299,7 +301,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Еженедельный обзор — воскресенье 20:00
     scheduler.add_job(
         send_weekly_review,
-        trigger=CronTrigger(day_of_week="sun", hour=20, minute=0),
+        trigger=CronTrigger(day_of_week="sun", hour=20, minute=0, timezone=MSK),
         args=[bot],
         id="weekly_review",
         replace_existing=True,
@@ -308,7 +310,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Weekly Notes Obsidian — воскресенье 20:30 (после weekly review)
     scheduler.add_job(
         generate_weekly_obsidian_note,
-        trigger=CronTrigger(day_of_week="sun", hour=20, minute=30),
+        trigger=CronTrigger(day_of_week="sun", hour=20, minute=30, timezone=MSK),
         id="weekly_obsidian_note",
         replace_existing=True,
     )

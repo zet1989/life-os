@@ -138,7 +138,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Месячный психологический отчёт — последний день месяца в 20:00
     scheduler.add_job(
         send_monthly_psychology_report,
-        trigger=CronTrigger(day="last", hour=20, minute=0),
+        trigger=CronTrigger(day="last", hour=20, minute=0, timezone=MSK),
         args=[bot],
         id="monthly_psychology_report",
         replace_existing=True,

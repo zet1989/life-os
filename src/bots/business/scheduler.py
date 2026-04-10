@@ -80,14 +80,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(
         remind_start_work,
-        trigger=CronTrigger(hour=10, minute=0, day_of_week="mon-fri"),
+        trigger=CronTrigger(hour=10, minute=0, day_of_week="mon-fri", timezone=MSK),
         args=[bot],
         id="work_timer_start_reminder",
         replace_existing=True,
     )
     scheduler.add_job(
         remind_stop_work,
-        trigger=CronTrigger(hour=18, minute=0, day_of_week="mon-fri"),
+        trigger=CronTrigger(hour=18, minute=0, day_of_week="mon-fri", timezone=MSK),
         args=[bot],
         id="work_timer_stop_reminder",
         replace_existing=True,
