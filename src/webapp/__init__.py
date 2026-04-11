@@ -177,6 +177,18 @@ async def api_finances(request: web.Request) -> web.Response:
     })
 
 
+async def api_projects(request: web.Request) -> web.Response:
+    """GET /api/webapp/projects — проекты пользователя."""
+    user_id = _get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "unauthorized"}, status=401)
+
+    from src.db.queries import get_accessible_projects
+
+    projects = await get_accessible_projects(user_id)
+    return web.json_response({"projects": [dict(p) for p in projects]})
+
+
 async def api_task_complete(request: web.Request) -> web.Response:
     """POST /api/webapp/tasks/{task_id}/complete — отметить задачу выполненной."""
     user_id = _get_user_id(request)
@@ -234,6 +246,7 @@ def setup_webapp_routes(app: web.Application) -> None:
     app.router.add_get("/api/webapp/goals", api_goals)
     app.router.add_get("/api/webapp/health", api_health_today)
     app.router.add_get("/api/webapp/finances", api_finances)
+    app.router.add_get("/api/webapp/projects", api_projects)
 
     # Static files (HTML/CSS/JS)
     static_dir = os.path.join(os.path.dirname(__file__), "static")

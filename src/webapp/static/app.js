@@ -51,6 +51,7 @@ async function loadTab(name) {
     try {
         switch (name) {
             case "tasks": await loadTasks(); break;
+            case "projects": await loadProjects(); break;
             case "health": await loadHealth(); break;
             case "goals": await loadGoals(); break;
             case "finances": await loadFinances(); break;
@@ -58,6 +59,13 @@ async function loadTab(name) {
         cache[name] = true;
     } catch (e) {
         console.error("Load error:", name, e);
+        const container = document.getElementById(`tab-${name}`);
+        if (container && !container.querySelector(".error-state")) {
+            const errDiv = document.createElement("div");
+            errDiv.className = "error-state";
+            errDiv.textContent = e.message.includes("401") ? "⚠️ Ошибка авторизации" : `⚠️ Ошибка загрузки: ${e.message}`;
+            container.appendChild(errDiv);
+        }
     }
 }
 
@@ -179,6 +187,40 @@ btnSubmit.addEventListener("click", async () => {
     }
 });
 
+// === Projects ===
+
+async function loadProjects() {
+    const data = await api("/api/webapp/projects");
+    const list = document.getElementById("projects-list");
+
+    if (!data.projects || !data.projects.length) {
+        list.innerHTML = '<div class="empty-state">Нет активных проектов</div>';
+        return;
+    }
+
+    const typeIcons = { solo: "👤", partnership: "🤝", family: "👨‍👩‍👦", asset: "🏠" };
+
+    list.innerHTML = data.projects.map(p => {
+        const icon = typeIcons[p.type] || "📁";
+        const meta = p.metadata || {};
+        const details = [];
+        if (p.type === "asset" && meta.address) details.push(meta.address);
+        if (meta.vin) details.push(`VIN: ${meta.vin}`);
+        const statusClass = p.status === "active" ? "project-active" : "project-paused";
+
+        return `
+            <div class="list-item project-item">
+                <div class="project-icon">${icon}</div>
+                <div class="project-info">
+                    <div class="project-name">${escapeHtml(p.name)}</div>
+                    ${details.length ? `<div class="project-meta">${escapeHtml(details.join(" · "))}</div>` : ""}
+                </div>
+                <span class="project-status ${statusClass}">${p.status === "active" ? "●" : "⏸"}</span>
+            </div>
+        `;
+    }).join("");
+}
+
 // === Health ===
 
 async function loadHealth() {
@@ -286,7 +328,7 @@ async function loadFinances() {
         const cls = isIncome ? "income" : "expense";
         const amount = Math.abs(parseFloat(t.amount) || 0);
         const cat = t.category || "";
-        const date = t.created_at ? new Date(t.created_at).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) : "";
+        const date = t.timestamp ? new Date(t.timestamp).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) : "";
 
         return `
             <div class="list-item finance-item">

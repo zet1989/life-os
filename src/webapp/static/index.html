@@ -12,6 +12,7 @@
         <!-- Навигация -->
         <nav class="tabs">
             <button class="tab active" data-tab="tasks">📋 Задачи</button>
+            <button class="tab" data-tab="projects">📁 Проекты</button>
             <button class="tab" data-tab="health">🏥 Здоровье</button>
             <button class="tab" data-tab="goals">🎯 Цели</button>
             <button class="tab" data-tab="finances">💰 Финансы</button>
@@ -49,7 +50,15 @@
 
         <!-- Здоровье -->
         <section id="tab-health" class="tab-content">
-            <div class="cards-row">
+
+        <!-- Проекты -->
+        <section id="tab-projects" class="tab-content">
+            <h2>Мои проекты</h2>
+            <div id="projects-list" class="list"></div>
+        </section>
+
+        <!-- Здоровье -->
+        <section id="tab-health" class="tab-content">            <div class="cards-row">
                 <div class="stat-card">
                     <div class="stat-label">🔥 Калории</div>
                     <div class="stat-value" id="health-kcal">—</div>

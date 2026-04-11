@@ -40,12 +40,12 @@ body {
 
 .tab {
     flex: 1;
-    padding: 12px 4px;
+    padding: 12px 2px;
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
     color: var(--hint);
-    font-size: 13px;
+    font-size: 11px;
     cursor: pointer;
     transition: all 0.2s;
     white-space: nowrap;
@@ -293,3 +293,29 @@ input:focus { border-color: var(--link); }
     padding: 32px 16px;
     font-size: 14px;
 }
+
+/* === Error state === */
+.error-state {
+    text-align: center;
+    color: var(--orange);
+    padding: 24px 16px;
+    font-size: 14px;
+    background: var(--section-bg);
+    border-radius: var(--radius);
+    margin-top: 12px;
+}
+
+/* === Projects === */
+.project-item { gap: 12px; }
+
+.project-icon { font-size: 24px; flex-shrink: 0; }
+
+.project-info { flex: 1; min-width: 0; }
+
+.project-name { font-weight: 600; font-size: 15px; }
+
+.project-meta { font-size: 12px; color: var(--hint); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.project-status { font-size: 10px; flex-shrink: 0; }
+.project-active { color: var(--green); }
+.project-paused { color: var(--orange); }
