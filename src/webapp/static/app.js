@@ -4,17 +4,16 @@ const tg = window.Telegram?.WebApp;
 const initData = tg?.initData || "";
 const initDataUnsafe = tg?.initDataUnsafe || {};
 
+// user_id: initDataUnsafe > URL param > null
+const urlUid = new URLSearchParams(window.location.search).get("uid");
+const userId = initDataUnsafe?.user?.id || urlUid || null;
+
 // Настройка Telegram Web App
 if (tg) {
     tg.ready();
     tg.expand();
     tg.enableClosingConfirmation();
 }
-
-// Debug: логируем initData
-console.log("TG initData length:", initData.length);
-console.log("TG initDataUnsafe:", JSON.stringify(initDataUnsafe));
-console.log("TG user:", JSON.stringify(initDataUnsafe?.user));
 
 // === API ===
 
@@ -27,9 +26,9 @@ async function api(path, options = {}) {
     if (initData) {
         headers["X-Telegram-Init-Data"] = initData;
     }
-    // Fallback: передаём user_id напрямую если initData пуст
-    if (!initData && initDataUnsafe?.user?.id) {
-        headers["X-Telegram-User-Id"] = String(initDataUnsafe.user.id);
+    // Fallback: передаём user_id из initDataUnsafe или URL
+    if (!initData && userId) {
+        headers["X-Telegram-User-Id"] = String(userId);
     }
     const res = await fetch(path, {
         ...options,

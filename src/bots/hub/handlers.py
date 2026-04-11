@@ -68,7 +68,7 @@ async def cmd_start(message: Message, db_user: dict) -> None:
         f"👋 Привет, {name}!\n\n"
         "Я — <b>Life OS</b>, твой персональный ассистент.\n"
         "Выбери раздел:",
-        reply_markup=main_menu_keyboard(allowed),
+        reply_markup=main_menu_keyboard(allowed, user_id=message.from_user.id),
     )
 
 
@@ -83,7 +83,7 @@ async def cmd_menu(message: Message, db_user: dict) -> None:
     await safe_answer(
         message,
         "🏠 <b>Главное меню</b>\n\nВыбери раздел:",
-        reply_markup=main_menu_keyboard(allowed),
+        reply_markup=main_menu_keyboard(allowed, user_id=message.from_user.id),
     )
 
 
@@ -124,5 +124,5 @@ async def no_section_fallback(message: Message, db_user: dict) -> None:
     await safe_answer(
         message,
         "👆 Сначала выберите раздел из меню:",
-        reply_markup=main_menu_keyboard(allowed),
+        reply_markup=main_menu_keyboard(allowed, user_id=message.from_user.id),
     )

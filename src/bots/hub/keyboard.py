@@ -66,7 +66,7 @@ def set_current_section(user_id: int, section: Section | None) -> None:
     _user_sections[user_id] = section
 
 
-def main_menu_keyboard(allowed_sections: list[Section] | None = None) -> ReplyKeyboardMarkup:
+def main_menu_keyboard(allowed_sections: list[Section] | None = None, user_id: int | None = None) -> ReplyKeyboardMarkup:
     """Главное меню с секциями.
 
     allowed_sections: если задано - показать только разрешённые.
@@ -88,6 +88,8 @@ def main_menu_keyboard(allowed_sections: list[Section] | None = None) -> ReplyKe
     # Кнопка Web App (если webhook_host задан — есть куда открывать)
     if settings.webhook_host:
         webapp_url = f"{settings.webhook_host}/webapp"
+        if user_id:
+            webapp_url += f"?uid={user_id}"
         buttons.append([KeyboardButton(text="📊 Дашборд", web_app=WebAppInfo(url=webapp_url))])
 
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
