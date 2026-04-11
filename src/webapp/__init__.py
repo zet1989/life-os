@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import date, datetime
+from datetime import date, datetime, time as time_type
 from decimal import Decimal
 from urllib.parse import parse_qs, unquote
 
@@ -23,6 +23,8 @@ def _json_default(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
     if isinstance(obj, date):
+        return obj.isoformat()
+    if isinstance(obj, time_type):
         return obj.isoformat()
     if isinstance(obj, Decimal):
         return float(obj)
