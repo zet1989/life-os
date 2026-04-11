@@ -1670,7 +1670,124 @@ async def get_all_watch_users() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def get_today_watch_metrics(user_id: int) -> list[dict]:
+# === Webapp aggregate queries ===
+
+
+async def get_projects_with_stats(user_id: int) -> list[dict]:
+    """Проекты с кол-вом задач и финансовым балансом."""
+    rows = await get_pool().fetch(
+        """SELECT p.*,
+               COALESCE(t.active_count, 0)::int AS active_tasks,
+               COALESCE(t.done_count, 0)::int   AS done_tasks,
+               COALESCE(f.total_income, 0)       AS total_income,
+               COALESCE(f.total_expense, 0)      AS total_expense
+           FROM projects p
+           LEFT JOIN LATERAL (
+               SELECT COUNT(*) FILTER (WHERE NOT is_done) AS active_count,
+                      COUNT(*) FILTER (WHERE is_done)     AS done_count
+               FROM tasks WHERE project_id = p.project_id AND user_id = $1
+           ) t ON TRUE
+           LEFT JOIN LATERAL (
+               SELECT
+                   COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'income'), 0)  AS total_income,
+                   COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'expense'), 0) AS total_expense
+               FROM finances WHERE project_id = p.project_id
+           ) f ON TRUE
+           WHERE p.status = 'active'
+             AND (p.owner_id = $1 OR $1 = ANY(p.collaborators))
+           ORDER BY t.active_count DESC NULLS LAST, p.created_at""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_overdue_tasks(user_id: int) -> list[dict]:
+    """Просроченные незавершённые задачи."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           WHERE t.user_id = $1 AND t.is_done = FALSE
+             AND t.due_date < CURRENT_DATE
+           ORDER BY t.due_date, t.due_time NULLS LAST""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_today_tasks_ext(user_id: int) -> list[dict]:
+    """Задачи на сегодня с именем проекта."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           WHERE t.user_id = $1
+             AND t.due_date = CURRENT_DATE
+           ORDER BY t.is_done, t.due_time NULLS LAST, t.priority""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_tomorrow_tasks(user_id: int) -> list[dict]:
+    """Задачи на завтра."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           WHERE t.user_id = $1
+             AND t.due_date = CURRENT_DATE + 1
+           ORDER BY t.due_time NULLS LAST, t.priority""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_goals_with_tasks(user_id: int) -> list[dict]:
+    """Активные цели с кол-вом привязанных задач."""
+    rows = await get_pool().fetch(
+        """SELECT g.*,
+               COALESCE(t.total_count, 0)::int AS total_tasks,
+               COALESCE(t.done_count, 0)::int  AS done_tasks
+           FROM goals g
+           LEFT JOIN LATERAL (
+               SELECT COUNT(*)                          AS total_count,
+                      COUNT(*) FILTER (WHERE is_done)   AS done_count
+               FROM tasks WHERE goal_id = g.id AND user_id = $1
+           ) t ON TRUE
+           WHERE g.user_id = $1 AND g.status = 'active'
+           ORDER BY g.created_at""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_monthly_finance_summary(user_id: int) -> dict:
+    """Сводка доходов/расходов за текущий месяц."""
+    row = await get_pool().fetchrow(
+        """SELECT
+               COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'income'), 0)  AS income,
+               COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'expense'), 0) AS expense
+           FROM finances
+           WHERE user_id = $1
+             AND date_trunc('month', timestamp) = date_trunc('month', CURRENT_DATE)""",
+        user_id,
+    )
+    return dict(row) if row else {"income": 0, "expense": 0}
+
+
+async def get_category_breakdown(user_id: int) -> list[dict]:
+    """Расходы по категориям за текущий месяц."""
+    rows = await get_pool().fetch(
+        """SELECT category, SUM(amount)::numeric(12,2) AS total
+           FROM finances
+           WHERE user_id = $1 AND transaction_type = 'expense'
+             AND date_trunc('month', timestamp) = date_trunc('month', CURRENT_DATE)
+           GROUP BY category
+           ORDER BY total DESC""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
     """Получить сегодняшние метрики с часов."""
     rows = await get_pool().fetch(
         """SELECT json_data, timestamp, raw_text FROM events

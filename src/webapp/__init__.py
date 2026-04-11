@@ -30,7 +30,7 @@ def _json_default(obj):
 
 
 def _json_response(data, **kwargs):
-    return _json_response(data, dumps=lambda d: json.dumps(d, default=_json_default, ensure_ascii=False), **kwargs)
+    return web.json_response(data, dumps=lambda d: json.dumps(d, default=_json_default, ensure_ascii=False), **kwargs)
 
 
 def validate_init_data(init_data: str, bot_token: str, max_age: int = 86400) -> dict | None:
@@ -121,31 +121,35 @@ def _auth_error_response(request: web.Request) -> web.Response:
 
 
 async def api_tasks_today(request: web.Request) -> web.Response:
-    """GET /api/webapp/tasks — задачи на сегодня."""
+    """GET /api/webapp/tasks — задачи на сегодня + просроченные + завтра."""
     user_id = _get_user_id(request)
     if not user_id:
         return _auth_error_response(request)
 
-    from src.db.queries import get_today_tasks, get_today_focus
+    from src.db.queries import get_today_tasks_ext, get_overdue_tasks, get_tomorrow_tasks, get_today_focus
 
-    tasks = await get_today_tasks(user_id)
+    today = await get_today_tasks_ext(user_id)
+    overdue = await get_overdue_tasks(user_id)
+    tomorrow = await get_tomorrow_tasks(user_id)
     focus = await get_today_focus(user_id)
 
     return _json_response({
-        "tasks": [dict(t) for t in tasks],
+        "tasks": [dict(t) for t in today],
+        "overdue": [dict(t) for t in overdue],
+        "tomorrow": [dict(t) for t in tomorrow],
         "focus": dict(focus) if focus else None,
     })
 
 
 async def api_goals(request: web.Request) -> web.Response:
-    """GET /api/webapp/goals — активные цели."""
+    """GET /api/webapp/goals — активные цели с привязанными задачами."""
     user_id = _get_user_id(request)
     if not user_id:
         return _auth_error_response(request)
 
-    from src.db.queries import get_active_goals
+    from src.db.queries import get_goals_with_tasks
 
-    goals = await get_active_goals(user_id)
+    goals = await get_goals_with_tasks(user_id)
     return _json_response({"goals": [dict(g) for g in goals]})
 
 
@@ -192,31 +196,35 @@ async def api_health_today(request: web.Request) -> web.Response:
 
 
 async def api_finances(request: web.Request) -> web.Response:
-    """GET /api/webapp/finances — последние транзакции + сводка."""
+    """GET /api/webapp/finances — сводка за месяц + категории + транзакции."""
     user_id = _get_user_id(request)
     if not user_id:
         return _auth_error_response(request)
 
-    from src.db.queries import get_recent_finances, get_debts_summary
+    from src.db.queries import get_recent_finances, get_debts_summary, get_monthly_finance_summary, get_category_breakdown
 
     transactions = await get_recent_finances(user_id, limit=20)
     debts = await get_debts_summary(user_id)
+    monthly = await get_monthly_finance_summary(user_id)
+    categories = await get_category_breakdown(user_id)
 
     return _json_response({
         "transactions": [dict(t) for t in transactions],
         "debts_summary": dict(debts) if debts else {},
+        "monthly": monthly,
+        "categories": [dict(c) for c in categories],
     })
 
 
 async def api_projects(request: web.Request) -> web.Response:
-    """GET /api/webapp/projects — проекты пользователя."""
+    """GET /api/webapp/projects — проекты с задачами и финансами."""
     user_id = _get_user_id(request)
     if not user_id:
         return _auth_error_response(request)
 
-    from src.db.queries import get_accessible_projects
+    from src.db.queries import get_projects_with_stats
 
-    projects = await get_accessible_projects(user_id)
+    projects = await get_projects_with_stats(user_id)
     return _json_response({"projects": [dict(p) for p in projects]})
 
 

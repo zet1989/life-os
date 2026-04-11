@@ -71,6 +71,23 @@ body {
 h2 { font-size: 18px; font-weight: 700; }
 h3 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--hint); }
 
+/* === Badge === */
+.badge {
+    display: inline-block;
+    background: var(--section-bg);
+    color: var(--hint);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+}
+
+.badge-red {
+    background: var(--red);
+    color: white;
+}
+
 /* === Cards === */
 .cards-row {
     display: grid;
@@ -86,8 +103,9 @@ h3 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--hint); 
     text-align: center;
 }
 
+.stat-card.mini { padding: 10px; }
 .stat-label { font-size: 13px; color: var(--hint); margin-bottom: 4px; }
-.stat-value { font-size: 22px; font-weight: 700; }
+.stat-value { font-size: 20px; font-weight: 700; }
 
 /* === Focus === */
 .focus-card {
@@ -117,11 +135,10 @@ h3 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--hint); 
     transition: opacity 0.3s;
 }
 
-.list-item:first-child { border-top-left-radius: var(--radius); border-top-right-radius: var(--radius); }
-.list-item:last-child { border-bottom-left-radius: var(--radius); border-bottom-right-radius: var(--radius); }
+.list-item.done { opacity: 0.5; }
+.list-item.done .task-text { text-decoration: line-through; }
 
-.list-item.done { opacity: 0.5; text-decoration: line-through; }
-
+/* === Tasks === */
 .task-checkbox {
     width: 22px; height: 22px;
     border-radius: 50%;
@@ -133,6 +150,7 @@ h3 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--hint); 
     justify-content: center;
     transition: all 0.2s;
     background: none;
+    color: var(--text);
 }
 
 .task-checkbox.checked {
@@ -142,20 +160,47 @@ h3 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--hint); 
     font-size: 12px;
 }
 
-.task-text { flex: 1; font-size: 15px; line-height: 1.3; }
-
+.task-content { flex: 1; min-width: 0; }
+.task-text { font-size: 15px; line-height: 1.3; }
 .task-time { font-size: 12px; color: var(--hint); white-space: nowrap; }
 
-.task-priority {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
+.task-meta {
+    display: flex;
+    gap: 8px;
+    margin-top: 3px;
 }
 
-.priority-critical { background: var(--red); }
-.priority-high { background: var(--orange); }
-.priority-normal { background: var(--link); }
-.priority-low { background: var(--green); }
+.task-project {
+    font-size: 11px;
+    color: var(--link);
+    opacity: 0.8;
+}
+
+.task-overdue-date {
+    font-size: 11px;
+    color: var(--red);
+}
+
+/* Overdue section */
+.overdue-header h2 { color: var(--red); }
+
+.overdue-item {
+    border-left: 3px solid var(--red);
+}
+
+/* Tomorrow section */
+.tomorrow-header {
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-icon {
+    font-size: 12px;
+    color: var(--hint);
+    transition: transform 0.2s;
+}
+
+.collapsed { display: none !important; }
 
 /* === Finances === */
 .finance-item { justify-content: space-between; }
@@ -166,20 +211,126 @@ h3 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--hint); 
     white-space: nowrap;
 }
 
-.finance-amount.income { color: var(--green); }
-.finance-amount.expense { color: var(--red); }
+.finance-amount.income, .income { color: var(--green); }
+.finance-amount.expense, .expense { color: var(--red); }
 
 .finance-meta {
     font-size: 12px;
     color: var(--hint);
 }
 
+/* Monthly summary */
+.monthly-card {
+    background: var(--section-bg);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.monthly-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--hint);
+    margin-bottom: 12px;
+}
+
+.monthly-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.monthly-label {
+    font-size: 12px;
+    color: var(--hint);
+    margin-bottom: 2px;
+}
+
+.monthly-value {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.monthly-item.income .monthly-value { color: var(--green); }
+.monthly-item.expense .monthly-value { color: var(--red); }
+
+.monthly-balance {
+    font-size: 16px;
+    font-weight: 700;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+
+/* Categories breakdown */
+.categories { display: flex; flex-direction: column; gap: 8px; }
+
+.category-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.category-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.category-name {
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.category-amount {
+    font-size: 13px;
+    color: var(--hint);
+}
+
+.category-bar {
+    width: 100%;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.category-fill {
+    height: 100%;
+    background: var(--red);
+    border-radius: 3px;
+    opacity: 0.7;
+    transition: width 0.5s ease;
+}
+
 /* === Goals === */
-.goal-item { flex-direction: column; align-items: stretch; gap: 6px; }
+.goal-card { flex-direction: column; align-items: stretch; gap: 6px; }
 
 .goal-header { display: flex; justify-content: space-between; align-items: center; }
 .goal-name { font-weight: 600; font-size: 15px; }
 .goal-pct { font-size: 13px; color: var(--hint); }
+
+.goal-meta {
+    display: flex;
+    gap: 12px;
+    margin-top: 2px;
+}
+
+.goal-tasks {
+    font-size: 12px;
+    color: var(--link);
+}
+
+.goal-days {
+    font-size: 12px;
+    color: var(--hint);
+}
+
+.goal-days.urgent {
+    color: var(--red);
+    font-weight: 600;
+}
 
 .progress-bar {
     width: 100%;
@@ -189,12 +340,104 @@ h3 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--hint); 
     overflow: hidden;
 }
 
+.progress-bar.thin { height: 4px; margin-bottom: 4px; }
+
 .progress-fill {
     height: 100%;
     background: var(--green);
     border-radius: 3px;
     transition: width 0.5s ease;
 }
+
+/* === Projects === */
+.project-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 14px;
+}
+
+.project-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.project-name {
+    font-weight: 600;
+    font-size: 15px;
+}
+
+.project-type {
+    font-size: 11px;
+    color: var(--hint);
+}
+
+.project-stats {
+    display: flex;
+    gap: 16px;
+}
+
+.project-stat {
+    font-size: 13px;
+    color: var(--text);
+}
+
+.project-stat.dim { color: var(--hint); }
+.project-stat.income { color: var(--green); font-weight: 600; }
+.project-stat.expense { color: var(--red); font-weight: 600; }
+
+/* === Health targets === */
+.health-targets {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.target-card {
+    background: var(--section-bg);
+    border-radius: var(--radius);
+    padding: 12px 10px;
+    text-align: center;
+}
+
+.target-icon { font-size: 20px; margin-bottom: 4px; }
+
+.target-value {
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.target-max {
+    font-size: 11px;
+    color: var(--hint);
+    font-weight: 400;
+}
+
+.target-label {
+    font-size: 11px;
+    color: var(--hint);
+    margin-bottom: 6px;
+}
+
+.target-bar {
+    width: 100%;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.target-fill {
+    height: 100%;
+    background: var(--orange);
+    border-radius: 2px;
+    transition: width 0.5s ease;
+}
+
+.target-fill.fill-blue { background: #007AFF; }
+.target-fill.fill-green { background: var(--green); }
 
 /* === Debts summary === */
 .debts-card {
@@ -254,11 +497,15 @@ input:focus { border-color: var(--link); }
 
 /* === Stats === */
 .stats-line {
-    text-align: center;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     color: var(--hint);
     font-size: 13px;
     margin-top: 12px;
 }
+
+.stats-line .progress-bar { flex: 1; }
 
 /* === Loader === */
 .loader {
@@ -304,18 +551,4 @@ input:focus { border-color: var(--link); }
     border-radius: var(--radius);
     margin-top: 12px;
 }
-
-/* === Projects === */
-.project-item { gap: 12px; }
-
-.project-icon { font-size: 24px; flex-shrink: 0; }
-
-.project-info { flex: 1; min-width: 0; }
-
-.project-name { font-weight: 600; font-size: 15px; }
-
-.project-meta { font-size: 12px; color: var(--hint); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.project-status { font-size: 10px; flex-shrink: 0; }
-.project-active { color: var(--green); }
 .project-paused { color: var(--orange); }

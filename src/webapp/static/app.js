@@ -1,14 +1,12 @@
-/* Life OS — Telegram Mini App */
+/* Life OS — Telegram Mini App v2 */
 
 const tg = window.Telegram?.WebApp;
 const initData = tg?.initData || "";
 const initDataUnsafe = tg?.initDataUnsafe || {};
 
-// user_id: initDataUnsafe > URL param > null
 const urlUid = new URLSearchParams(window.location.search).get("uid");
 const userId = initDataUnsafe?.user?.id || urlUid || null;
 
-// Настройка Telegram Web App
 if (tg) {
     tg.ready();
     tg.expand();
@@ -18,28 +16,13 @@ if (tg) {
 // === API ===
 
 async function api(path, options = {}) {
-    // Собираем auth headers
-    const headers = {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-    };
-    if (initData) {
-        headers["X-Telegram-Init-Data"] = initData;
-    }
-    // Fallback: передаём user_id из initDataUnsafe или URL
-    if (!initData && userId) {
-        headers["X-Telegram-User-Id"] = String(userId);
-    }
-    const res = await fetch(path, {
-        ...options,
-        headers,
-    });
+    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    if (initData) headers["X-Telegram-Init-Data"] = initData;
+    if (!initData && userId) headers["X-Telegram-User-Id"] = String(userId);
+    const res = await fetch(path, { ...options, headers });
     if (!res.ok) {
         let detail = `API ${res.status}`;
-        try {
-            const body = await res.json();
-            if (body.reason) detail += ` (${body.reason}, data_len=${body.init_data_len})`;
-        } catch (_) {}
+        try { const body = await res.json(); if (body.reason) detail += ` (${body.reason})`; } catch (_) {}
         throw new Error(detail);
     }
     return res.json();
@@ -49,6 +32,7 @@ async function api(path, options = {}) {
 
 const tabs = document.querySelectorAll(".tab");
 const contents = document.querySelectorAll(".tab-content");
+const cache = {};
 
 tabs.forEach(tab => {
     tab.addEventListener("click", () => {
@@ -60,9 +44,6 @@ tabs.forEach(tab => {
         loadTab(target);
     });
 });
-
-// === Data cache ===
-const cache = {};
 
 async function loadTab(name) {
     if (cache[name]) return;
@@ -81,7 +62,7 @@ async function loadTab(name) {
         if (container && !container.querySelector(".error-state")) {
             const errDiv = document.createElement("div");
             errDiv.className = "error-state";
-            errDiv.textContent = e.message.includes("401") ? "⚠️ Ошибка авторизации" : `⚠️ Ошибка загрузки: ${e.message}`;
+            errDiv.textContent = e.message.includes("401") ? "⚠️ Ошибка авторизации" : `⚠️ ${e.message}`;
             container.appendChild(errDiv);
         }
     }
@@ -100,7 +81,49 @@ async function loadTasks() {
         focusBlock.classList.remove("hidden");
     }
 
+    // Overdue
+    const overdueSection = document.getElementById("overdue-section");
+    const overdueList = document.getElementById("overdue-list");
+    if (data.overdue && data.overdue.length) {
+        overdueSection.classList.remove("hidden");
+        document.getElementById("overdue-count").textContent = data.overdue.length;
+        overdueList.innerHTML = data.overdue.map(t => renderTaskItem(t, true)).join("");
+    }
+
+    // Today
+    const todayCount = document.getElementById("today-count");
+    todayCount.textContent = data.tasks.length || "";
     renderTasks(data.tasks);
+
+    // Tomorrow
+    const tomorrowSection = document.getElementById("tomorrow-section");
+    if (data.tomorrow && data.tomorrow.length) {
+        tomorrowSection.classList.remove("hidden");
+        document.getElementById("tomorrow-count").textContent = data.tomorrow.length;
+        document.getElementById("tomorrow-list").innerHTML = data.tomorrow.map(t => renderTaskItem(t, false)).join("");
+    }
+}
+
+function renderTaskItem(t, isOverdue) {
+    const doneClass = t.is_done ? "done" : "";
+    const checkClass = t.is_done ? "checked" : "";
+    const time = t.due_time ? t.due_time.slice(0, 5) : "";
+    const project = t.project_name ? `<span class="task-project">📁 ${escapeHtml(t.project_name)}</span>` : "";
+    const overdueDate = isOverdue && t.due_date ? `<span class="task-overdue-date">${formatDate(t.due_date)}</span>` : "";
+    const priorityDot = t.priority === "critical" ? "🔴" : t.priority === "high" ? "🟠" : "";
+
+    return `
+        <div class="list-item ${doneClass} ${isOverdue ? 'overdue-item' : ''}" data-task-id="${t.id}">
+            <button class="task-checkbox ${checkClass}" onclick="toggleTask(${t.id}, ${!t.is_done})">
+                ${t.is_done ? "✓" : ""}
+            </button>
+            <div class="task-content">
+                <span class="task-text">${priorityDot} ${escapeHtml(t.task_text)}</span>
+                ${project || overdueDate ? `<div class="task-meta">${project}${overdueDate}</div>` : ""}
+            </div>
+            ${time ? `<span class="task-time">${time}</span>` : ""}
+        </div>
+    `;
 }
 
 function renderTasks(tasks) {
@@ -113,7 +136,6 @@ function renderTasks(tasks) {
         return;
     }
 
-    // Сортировка: невыполненные первые, потом по времени
     tasks.sort((a, b) => {
         if (a.is_done !== b.is_done) return a.is_done ? 1 : -1;
         const ta = a.due_time || "99:99";
@@ -121,41 +143,30 @@ function renderTasks(tasks) {
         return ta.localeCompare(tb);
     });
 
-    list.innerHTML = tasks.map(t => {
-        const priorityClass = `priority-${t.priority || "normal"}`;
-        const doneClass = t.is_done ? "done" : "";
-        const checkClass = t.is_done ? "checked" : "";
-        const time = t.due_time ? t.due_time.slice(0, 5) : "";
-        const tags = (t.tags || []).map(tag => `<span class="task-tag">#${tag}</span>`).join(" ");
-
-        return `
-            <div class="list-item ${doneClass}" data-task-id="${t.id}">
-                <button class="task-checkbox ${checkClass}" onclick="toggleTask(${t.id}, ${!t.is_done})">
-                    ${t.is_done ? "✓" : ""}
-                </button>
-                <span class="task-text">${escapeHtml(t.task_text)}${tags ? " " + tags : ""}</span>
-                ${time ? `<span class="task-time">${time}</span>` : ""}
-                <span class="task-priority ${priorityClass}"></span>
-            </div>
-        `;
-    }).join("");
+    list.innerHTML = tasks.map(t => renderTaskItem(t, false)).join("");
 
     const done = tasks.filter(t => t.is_done).length;
-    stats.textContent = `Выполнено: ${done}/${tasks.length}`;
+    const pct = Math.round(done / tasks.length * 100);
+    stats.innerHTML = `
+        <div class="progress-bar thin"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <span>Выполнено: ${done}/${tasks.length}</span>
+    `;
 }
 
 async function toggleTask(taskId, complete) {
     try {
-        if (complete) {
-            await api(`/api/webapp/tasks/${taskId}/complete`, { method: "POST" });
-        }
-        // Обновляем UI
+        if (complete) await api(`/api/webapp/tasks/${taskId}/complete`, { method: "POST" });
         cache.tasks = false;
         await loadTasks();
         if (tg) tg.HapticFeedback?.impactOccurred("light");
-    } catch (e) {
-        console.error("Toggle task error:", e);
-    }
+    } catch (e) { console.error("Toggle task error:", e); }
+}
+
+function toggleTomorrow() {
+    const list = document.getElementById("tomorrow-list");
+    const icon = document.getElementById("tomorrow-toggle");
+    list.classList.toggle("collapsed");
+    icon.textContent = list.classList.contains("collapsed") ? "▼" : "▲";
 }
 
 // === Add task form ===
@@ -168,30 +179,21 @@ btnAdd.addEventListener("click", () => {
     addForm.classList.toggle("hidden");
     if (!addForm.classList.contains("hidden")) {
         document.getElementById("new-task-text").focus();
-        // Установить сегодняшнюю дату
-        const today = new Date().toISOString().split("T")[0];
-        document.getElementById("new-task-date").value = today;
+        document.getElementById("new-task-date").value = new Date().toISOString().split("T")[0];
     }
 });
 
 btnSubmit.addEventListener("click", async () => {
     const text = document.getElementById("new-task-text").value.trim();
     if (!text) return;
-
     const date = document.getElementById("new-task-date").value;
     const priority = document.getElementById("new-task-priority").value;
-
     try {
         btnSubmit.disabled = true;
         await api("/api/webapp/tasks", {
             method: "POST",
-            body: JSON.stringify({
-                text,
-                due_date: date || null,
-                priority,
-            }),
+            body: JSON.stringify({ text, due_date: date || null, priority }),
         });
-
         document.getElementById("new-task-text").value = "";
         addForm.classList.add("hidden");
         cache.tasks = false;
@@ -200,9 +202,7 @@ btnSubmit.addEventListener("click", async () => {
     } catch (e) {
         console.error("Create task error:", e);
         if (tg) tg.HapticFeedback?.notificationOccurred("error");
-    } finally {
-        btnSubmit.disabled = false;
-    }
+    } finally { btnSubmit.disabled = false; }
 });
 
 // === Projects ===
@@ -210,30 +210,38 @@ btnSubmit.addEventListener("click", async () => {
 async function loadProjects() {
     const data = await api("/api/webapp/projects");
     const list = document.getElementById("projects-list");
+    document.getElementById("projects-count").textContent = data.projects.length || "";
 
     if (!data.projects || !data.projects.length) {
         list.innerHTML = '<div class="empty-state">Нет активных проектов</div>';
         return;
     }
 
-    const typeIcons = { solo: "👤", partnership: "🤝", family: "👨‍👩‍👦", asset: "🏠" };
+    const typeLabels = { solo: "👤 Личный", partnership: "🤝 Партнёрский", family: "👨‍👩‍👦 Семейный", asset: "🏠 Актив" };
 
     list.innerHTML = data.projects.map(p => {
-        const icon = typeIcons[p.type] || "📁";
-        const meta = p.metadata || {};
-        const details = [];
-        if (p.type === "asset" && meta.address) details.push(meta.address);
-        if (meta.vin) details.push(`VIN: ${meta.vin}`);
-        const statusClass = p.status === "active" ? "project-active" : "project-paused";
+        const totalTasks = (p.active_tasks || 0) + (p.done_tasks || 0);
+        const taskInfo = totalTasks > 0
+            ? `<span class="project-stat">📋 ${p.done_tasks}/${totalTasks}</span>`
+            : `<span class="project-stat dim">📋 0 задач</span>`;
+
+        const balance = (p.total_income || 0) - (p.total_expense || 0);
+        const finInfo = (p.total_income || p.total_expense)
+            ? `<span class="project-stat ${balance >= 0 ? 'income' : 'expense'}">${balance >= 0 ? '+' : ''}${formatMoney(balance)} ₽</span>`
+            : "";
+
+        const typeLabel = typeLabels[p.type] || "📁 Проект";
 
         return `
-            <div class="list-item project-item">
-                <div class="project-icon">${icon}</div>
-                <div class="project-info">
+            <div class="list-item project-card">
+                <div class="project-main">
                     <div class="project-name">${escapeHtml(p.name)}</div>
-                    ${details.length ? `<div class="project-meta">${escapeHtml(details.join(" · "))}</div>` : ""}
+                    <div class="project-type">${typeLabel}</div>
                 </div>
-                <span class="project-status ${statusClass}">${p.status === "active" ? "●" : "⏸"}</span>
+                <div class="project-stats">
+                    ${taskInfo}
+                    ${finInfo}
+                </div>
             </div>
         `;
     }).join("");
@@ -244,19 +252,32 @@ async function loadProjects() {
 async function loadHealth() {
     const data = await api("/api/webapp/health");
 
-    document.getElementById("health-kcal").textContent = data.total_kcal ? `${data.total_kcal} ккал` : "—";
-    document.getElementById("health-water").textContent = data.water_ml ? `${data.water_ml} мл` : "—";
+    // Targets
+    const kcal = data.total_kcal || 0;
+    const water = data.water_ml || 0;
+    document.getElementById("health-kcal-val").textContent = kcal;
+    document.getElementById("health-water-val").textContent = water;
+    document.getElementById("health-kcal-bar").style.width = `${Math.min(100, kcal / 2000 * 100)}%`;
+    document.getElementById("health-water-bar").style.width = `${Math.min(100, water / 2000 * 100)}%`;
 
     // Watch metrics
+    let steps = null;
     if (data.watch && data.watch.length) {
-        const metricsBlock = document.getElementById("watch-metrics");
-        metricsBlock.classList.remove("hidden");
-
+        const extras = document.getElementById("watch-extras");
+        extras.classList.remove("hidden");
         const latest = data.watch[data.watch.length - 1];
         const jd = typeof latest.json_data === "string" ? JSON.parse(latest.json_data) : (latest.json_data || {});
 
-        document.getElementById("watch-steps").textContent = jd.steps != null ? jd.steps.toLocaleString() : "—";
-        document.getElementById("watch-hr").textContent = jd.heart_rate != null ? `${jd.heart_rate} уд/мин` : "—";
+        steps = jd.steps;
+        if (jd.heart_rate != null) document.getElementById("watch-hr").textContent = `${jd.heart_rate} уд/мин`;
+        if (jd.spo2 != null) document.getElementById("watch-spo2").textContent = `${jd.spo2}%`;
+        if (jd.stress != null) document.getElementById("watch-stress").textContent = jd.stress;
+    }
+
+    // Steps target
+    if (steps != null) {
+        document.getElementById("health-steps-val").textContent = steps.toLocaleString();
+        document.getElementById("health-steps-bar").style.width = `${Math.min(100, steps / 10000 * 100)}%`;
     }
 
     // Meals
@@ -265,8 +286,8 @@ async function loadHealth() {
         mealsList.innerHTML = data.meals.map(m => {
             const jd = typeof m.json_data === "string" ? JSON.parse(m.json_data) : (m.json_data || {});
             const name = jd.food_name || m.raw_text || "Приём пищи";
-            const kcal = jd.calories ? `${jd.calories} ккал` : "";
-            return `<div class="list-item"><span class="task-text">${escapeHtml(name)}</span><span class="task-time">${kcal}</span></div>`;
+            const kcalStr = jd.calories ? `${jd.calories} ккал` : "";
+            return `<div class="list-item"><span class="task-text">${escapeHtml(name)}</span><span class="task-time">${kcalStr}</span></div>`;
         }).join("");
     } else {
         mealsList.innerHTML = '<div class="empty-state">Пока ничего не записано</div>';
@@ -302,15 +323,22 @@ async function loadGoals() {
     list.innerHTML = data.goals.map(g => {
         const pct = g.progress_pct || 0;
         const icon = typeIcons[g.type] || "🎯";
+        const tasksLine = g.total_tasks > 0
+            ? `<span class="goal-tasks">📋 ${g.done_tasks}/${g.total_tasks} задач</span>`
+            : "";
+        const daysLeft = g.target_date ? daysUntil(g.target_date) : null;
+        const daysLine = daysLeft != null
+            ? `<span class="goal-days ${daysLeft < 7 ? 'urgent' : ''}">${daysLeft > 0 ? `⏰ ${daysLeft} дн` : '⚠️ Срок!'}</span>`
+            : "";
+
         return `
-            <div class="list-item goal-item">
+            <div class="list-item goal-card">
                 <div class="goal-header">
                     <span class="goal-name">${icon} ${escapeHtml(g.title)}</span>
                     <span class="goal-pct">${pct}%</span>
                 </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: ${pct}%"></div>
-                </div>
+                <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+                ${tasksLine || daysLine ? `<div class="goal-meta">${tasksLine}${daysLine}</div>` : ""}
             </div>
         `;
     }).join("");
@@ -320,6 +348,43 @@ async function loadGoals() {
 
 async function loadFinances() {
     const data = await api("/api/webapp/finances");
+
+    // Monthly summary
+    if (data.monthly) {
+        const card = document.getElementById("monthly-summary");
+        card.classList.remove("hidden");
+        const m = data.monthly;
+        const balance = (m.income || 0) - (m.expense || 0);
+        const monthNames = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+        const now = new Date();
+        document.getElementById("monthly-title").textContent = `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+        document.getElementById("monthly-income").textContent = `+${formatMoney(m.income)} ₽`;
+        document.getElementById("monthly-expense").textContent = `−${formatMoney(m.expense)} ₽`;
+        const balEl = document.getElementById("monthly-balance");
+        balEl.textContent = `💰 Баланс: ${balance >= 0 ? '+' : ''}${formatMoney(balance)} ₽`;
+        balEl.className = `monthly-balance ${balance >= 0 ? 'income' : 'expense'}`;
+    }
+
+    // Categories breakdown
+    if (data.categories && data.categories.length) {
+        const section = document.getElementById("categories-section");
+        section.classList.remove("hidden");
+        const catList = document.getElementById("categories-list");
+        const maxAmount = Math.max(...data.categories.map(c => parseFloat(c.total)));
+        catList.innerHTML = data.categories.map(c => {
+            const total = parseFloat(c.total);
+            const pct = maxAmount > 0 ? (total / maxAmount * 100) : 0;
+            return `
+                <div class="category-row">
+                    <div class="category-info">
+                        <span class="category-name">${escapeHtml(c.category)}</span>
+                        <span class="category-amount">${formatMoney(total)} ₽</span>
+                    </div>
+                    <div class="category-bar"><div class="category-fill" style="width:${pct}%"></div></div>
+                </div>
+            `;
+        }).join("");
+    }
 
     // Debts summary
     const debtsCard = document.getElementById("debts-summary");
@@ -370,6 +435,17 @@ function escapeHtml(text) {
 
 function formatMoney(n) {
     return Number(n).toLocaleString("ru-RU", { maximumFractionDigits: 0 });
+}
+
+function formatDate(dateStr) {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+}
+
+function daysUntil(dateStr) {
+    const target = new Date(dateStr);
+    const now = new Date();
+    return Math.ceil((target - now) / 86400000);
 }
 
 // === Init ===

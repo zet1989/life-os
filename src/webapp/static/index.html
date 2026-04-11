@@ -25,8 +25,17 @@
                 <span id="focus-text"></span>
             </div>
 
+            <!-- Просроченные -->
+            <div id="overdue-section" class="hidden">
+                <div class="section-header overdue-header">
+                    <h2>⚠️ Просрочено <span id="overdue-count" class="badge badge-red"></span></h2>
+                </div>
+                <div id="overdue-list" class="list"></div>
+            </div>
+
+            <!-- Сегодня -->
             <div class="section-header">
-                <h2>Задачи на сегодня</h2>
+                <h2>Сегодня <span id="today-count" class="badge"></span></h2>
                 <button id="btn-add-task" class="btn-icon">➕</button>
             </div>
 
@@ -46,44 +55,71 @@
 
             <div id="tasks-list" class="list"></div>
             <div id="tasks-stats" class="stats-line"></div>
-        </section>
 
-        <!-- Здоровье -->
-        <section id="tab-health" class="tab-content">
+            <!-- Завтра -->
+            <div id="tomorrow-section" class="hidden">
+                <div class="section-header tomorrow-header" onclick="toggleTomorrow()">
+                    <h2>📆 Завтра <span id="tomorrow-count" class="badge"></span></h2>
+                    <span id="tomorrow-toggle" class="toggle-icon">▼</span>
+                </div>
+                <div id="tomorrow-list" class="list collapsed"></div>
+            </div>
+        </section>
 
         <!-- Проекты -->
         <section id="tab-projects" class="tab-content">
-            <h2>Мои проекты</h2>
+            <h2>Проекты <span id="projects-count" class="badge"></span></h2>
             <div id="projects-list" class="list"></div>
         </section>
 
         <!-- Здоровье -->
-        <section id="tab-health" class="tab-content">            <div class="cards-row">
-                <div class="stat-card">
-                    <div class="stat-label">🔥 Калории</div>
-                    <div class="stat-value" id="health-kcal">—</div>
+        <section id="tab-health" class="tab-content">
+            <div class="health-targets">
+                <div class="target-card">
+                    <div class="target-icon">🔥</div>
+                    <div class="target-info">
+                        <div class="target-value"><span id="health-kcal-val">0</span><span class="target-max">/2000</span></div>
+                        <div class="target-label">ккал</div>
+                        <div class="target-bar"><div id="health-kcal-bar" class="target-fill"></div></div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-label">💧 Вода</div>
-                    <div class="stat-value" id="health-water">—</div>
+                <div class="target-card">
+                    <div class="target-icon">💧</div>
+                    <div class="target-info">
+                        <div class="target-value"><span id="health-water-val">0</span><span class="target-max">/2000</span></div>
+                        <div class="target-label">мл</div>
+                        <div class="target-bar"><div id="health-water-bar" class="target-fill fill-blue"></div></div>
+                    </div>
+                </div>
+                <div class="target-card">
+                    <div class="target-icon">👟</div>
+                    <div class="target-info">
+                        <div class="target-value"><span id="health-steps-val">—</span><span class="target-max">/10000</span></div>
+                        <div class="target-label">шагов</div>
+                        <div class="target-bar"><div id="health-steps-bar" class="target-fill fill-green"></div></div>
+                    </div>
                 </div>
             </div>
 
-            <div id="watch-metrics" class="cards-row hidden">
-                <div class="stat-card">
-                    <div class="stat-label">👟 Шаги</div>
-                    <div class="stat-value" id="watch-steps">—</div>
-                </div>
-                <div class="stat-card">
+            <div id="watch-extras" class="cards-row hidden">
+                <div class="stat-card mini">
                     <div class="stat-label">❤️ Пульс</div>
                     <div class="stat-value" id="watch-hr">—</div>
                 </div>
+                <div class="stat-card mini">
+                    <div class="stat-label">🫁 SpO2</div>
+                    <div class="stat-value" id="watch-spo2">—</div>
+                </div>
+                <div class="stat-card mini">
+                    <div class="stat-label">😰 Стресс</div>
+                    <div class="stat-value" id="watch-stress">—</div>
+                </div>
             </div>
 
-            <h3>Приёмы пищи</h3>
+            <h3>🍽 Приёмы пищи</h3>
             <div id="meals-list" class="list"></div>
 
-            <h3>Тренировки</h3>
+            <h3>🏋️ Тренировки</h3>
             <div id="workouts-list" class="list"></div>
         </section>
 
@@ -95,8 +131,29 @@
 
         <!-- Финансы -->
         <section id="tab-finances" class="tab-content">
+            <div id="monthly-summary" class="monthly-card hidden">
+                <div class="monthly-title" id="monthly-title"></div>
+                <div class="monthly-row">
+                    <div class="monthly-item income">
+                        <div class="monthly-label">📈 Доходы</div>
+                        <div class="monthly-value" id="monthly-income"></div>
+                    </div>
+                    <div class="monthly-item expense">
+                        <div class="monthly-label">📉 Расходы</div>
+                        <div class="monthly-value" id="monthly-expense"></div>
+                    </div>
+                </div>
+                <div class="monthly-balance" id="monthly-balance"></div>
+            </div>
+
+            <div id="categories-section" class="hidden">
+                <h3>По категориям</h3>
+                <div id="categories-list" class="categories"></div>
+            </div>
+
             <div id="debts-summary" class="debts-card hidden"></div>
-            <h2>Последние транзакции</h2>
+
+            <h3>Последние транзакции</h3>
             <div id="finances-list" class="list"></div>
         </section>
     </div>
