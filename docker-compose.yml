@@ -57,6 +57,7 @@ services:
     volumes:
       - ./nginx/life-os.conf:/etc/nginx/conf.d/default.conf:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
     depends_on:
       - bot
     profiles:
@@ -98,3 +99,4 @@ volumes:
   syncthing_config:
   obsidian_vault:
   uptime_kuma_data:
+  certbot_www:
