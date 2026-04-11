@@ -164,11 +164,17 @@ async def _run_unified_webhook(app, instances, schedulers) -> None:
         if settings.webhook_secret:
             token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
             if token != settings.webhook_secret:
+                logger.warning("webhook_secret_mismatch")
                 return web.Response(status=403)
-        update = await request.json()
-        from aiogram.types import Update
-        telegram_update = Update.model_validate(update, context={"bot": bot})
-        await dp.feed_update(bot=bot, update=telegram_update)
+        try:
+            update = await request.json()
+            logger.info("webhook_received", update_id=update.get("update_id"))
+            from aiogram.types import Update
+            telegram_update = Update.model_validate(update, context={"bot": bot})
+            await dp.feed_update(bot=bot, update=telegram_update)
+            logger.info("webhook_processed", update_id=update.get("update_id"))
+        except Exception as e:
+            logger.error("webhook_handler_error", error=str(e), error_type=type(e).__name__)
         return web.Response(status=200)
 
     app.router.add_post(path, webhook_handler)
