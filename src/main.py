@@ -367,12 +367,16 @@ async def _main_webhook() -> None:
                 schedulers.append(sched)
 
             webhook_url = f"{settings.webhook_host}{path}"
-            await bot.set_webhook(
-                url=webhook_url,
-                secret_token=settings.webhook_secret or None,
-                drop_pending_updates=True,
-            )
-            logger.info("webhook_set", bot=cfg["name"], url=webhook_url)
+            try:
+                await bot.set_webhook(
+                    url=webhook_url,
+                    secret_token=settings.webhook_secret or None,
+                    drop_pending_updates=True,
+                )
+                logger.info("webhook_set", bot=cfg["name"], url=webhook_url)
+            except Exception as e:
+                logger.error("webhook_set_failed", bot=cfg["name"], url=webhook_url, error=str(e))
+                logger.info("webhook_retry_hint", hint="Webhook will be retried on next restart")
 
     # Health-check эндпоинт
     async def health_check(request: web.Request) -> web.Response:
