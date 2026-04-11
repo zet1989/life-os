@@ -507,6 +507,15 @@ async def get_project(project_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+async def get_project_by_name(name: str) -> dict | None:
+    """Получить активный проект по имени (для маппинга Obsidian → project_id)."""
+    row = await get_pool().fetchrow(
+        "SELECT * FROM projects WHERE LOWER(name) = LOWER($1) AND status = 'active' LIMIT 1",
+        name,
+    )
+    return dict(row) if row else None
+
+
 async def create_project(
     user_id: int,
     name: str,
@@ -1607,42 +1616,56 @@ async def get_work_summary_text(user_id: int, days: int = 7) -> str:
     return "\n".join(lines)
 
 
-# === Watch Tokens (HUAWEI Health Kit) ===
+# === Watch Tokens (Amazfit Balance 2 — push API) ===
 
 async def get_watch_token(user_id: int) -> dict | None:
-    """Получить OAuth2 токены часов для пользователя."""
+    """Получить API-ключ часов для пользователя."""
     row = await get_pool().fetchrow(
         "SELECT * FROM watch_tokens WHERE user_id = $1", user_id,
     )
     return dict(row) if row else None
 
 
+async def get_watch_user_by_api_key(api_key: str) -> dict | None:
+    """Найти пользователя по API-ключу часов (для push-эндпоинта)."""
+    row = await get_pool().fetchrow(
+        "SELECT * FROM watch_tokens WHERE api_key = $1 AND is_active = TRUE", api_key,
+    )
+    return dict(row) if row else None
+
+
 async def save_watch_token(
     user_id: int,
-    access_token: str,
-    refresh_token: str,
-    expires_at: datetime,
-    device_name: str = "HUAWEI WATCH FIT 4 Pro",
+    api_key: str,
+    device_name: str = "Amazfit Balance 2",
+    push_interval_min: int = 15,
 ) -> None:
-    """Сохранить или обновить OAuth2 токены часов."""
+    """Сохранить или обновить API-ключ часов."""
     await get_pool().execute(
-        """INSERT INTO watch_tokens (user_id, access_token, refresh_token, expires_at, device_name, updated_at)
-        VALUES ($1, $2, $3, $4, $5, NOW())
+        """INSERT INTO watch_tokens (user_id, api_key, device_name, push_interval_min, updated_at)
+        VALUES ($1, $2, $3, $4, NOW())
         ON CONFLICT (user_id) DO UPDATE
-        SET access_token = $2, refresh_token = $3, expires_at = $4, device_name = $5, updated_at = NOW()""",
-        user_id, access_token, refresh_token, expires_at, device_name,
+        SET api_key = $2, device_name = $3, push_interval_min = $4, updated_at = NOW()""",
+        user_id, api_key, device_name, push_interval_min,
+    )
+
+
+async def update_watch_last_push(user_id: int) -> None:
+    """Обновить время последнего push от часов."""
+    await get_pool().execute(
+        "UPDATE watch_tokens SET last_push_at = NOW() WHERE user_id = $1", user_id,
     )
 
 
 async def delete_watch_token(user_id: int) -> None:
-    """Удалить токены часов (отвязать)."""
+    """Удалить API-ключ часов (отвязать)."""
     await get_pool().execute("DELETE FROM watch_tokens WHERE user_id = $1", user_id)
 
 
 async def get_all_watch_users() -> list[dict]:
     """Все пользователи с подключёнными часами."""
     rows = await get_pool().fetch(
-        "SELECT * FROM watch_tokens ORDER BY user_id",
+        "SELECT * FROM watch_tokens WHERE is_active = TRUE ORDER BY user_id",
     )
     return [dict(r) for r in rows]
 

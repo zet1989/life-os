@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Life OS</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/webapp/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Навигация -->
+        <nav class="tabs">
+            <button class="tab active" data-tab="tasks">📋 Задачи</button>
+            <button class="tab" data-tab="health">🏥 Здоровье</button>
+            <button class="tab" data-tab="goals">🎯 Цели</button>
+            <button class="tab" data-tab="finances">💰 Финансы</button>
+        </nav>
+
+        <!-- Задачи -->
+        <section id="tab-tasks" class="tab-content active">
+            <div id="focus-block" class="focus-card hidden">
+                <span class="focus-icon">🎯</span>
+                <span id="focus-text"></span>
+            </div>
+
+            <div class="section-header">
+                <h2>Задачи на сегодня</h2>
+                <button id="btn-add-task" class="btn-icon">➕</button>
+            </div>
+
+            <div id="add-task-form" class="hidden">
+                <input type="text" id="new-task-text" placeholder="Новая задача..." autocomplete="off">
+                <div class="form-row">
+                    <input type="date" id="new-task-date">
+                    <select id="new-task-priority">
+                        <option value="normal">🔵 Обычный</option>
+                        <option value="high">🟠 Высокий</option>
+                        <option value="critical">🔴 Критичный</option>
+                        <option value="low">🟢 Низкий</option>
+                    </select>
+                </div>
+                <button id="btn-submit-task" class="btn-primary">Добавить</button>
+            </div>
+
+            <div id="tasks-list" class="list"></div>
+            <div id="tasks-stats" class="stats-line"></div>
+        </section>
+
+        <!-- Здоровье -->
+        <section id="tab-health" class="tab-content">
+            <div class="cards-row">
+                <div class="stat-card">
+                    <div class="stat-label">🔥 Калории</div>
+                    <div class="stat-value" id="health-kcal">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">💧 Вода</div>
+                    <div class="stat-value" id="health-water">—</div>
+                </div>
+            </div>
+
+            <div id="watch-metrics" class="cards-row hidden">
+                <div class="stat-card">
+                    <div class="stat-label">👟 Шаги</div>
+                    <div class="stat-value" id="watch-steps">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">❤️ Пульс</div>
+                    <div class="stat-value" id="watch-hr">—</div>
+                </div>
+            </div>
+
+            <h3>Приёмы пищи</h3>
+            <div id="meals-list" class="list"></div>
+
+            <h3>Тренировки</h3>
+            <div id="workouts-list" class="list"></div>
+        </section>
+
+        <!-- Цели -->
+        <section id="tab-goals" class="tab-content">
+            <h2>Активные цели</h2>
+            <div id="goals-list" class="list"></div>
+        </section>
+
+        <!-- Финансы -->
+        <section id="tab-finances" class="tab-content">
+            <div id="debts-summary" class="debts-card hidden"></div>
+            <h2>Последние транзакции</h2>
+            <div id="finances-list" class="list"></div>
+        </section>
+    </div>
+
+    <div id="loader" class="loader">
+        <div class="spinner"></div>
+    </div>
+
+    <script src="/webapp/app.js"></script>
+</body>
+</html>

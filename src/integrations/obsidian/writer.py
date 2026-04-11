@@ -745,6 +745,125 @@ class ObsidianWriter:
         path.write_text("\n".join(lines), encoding="utf-8")
         logger.info("obsidian.mindmap_generated", ideas=len(ideas), projects=len(by_project))
 
+    # ---------------------------------------------------------------
+    # Автоэкспорт медицинских анализов (фото → Vision AI → .md)
+    # ---------------------------------------------------------------
+
+    async def log_medical_analysis(self, analysis_text: str, analysis_type: str = "") -> str | None:
+        """Экспорт расшифровки анализа в 02-Knowledge/Здоровье/Анализы/.
+
+        Returns:
+            Относительный путь в vault (для RAG-индексации) или None.
+        """
+        if not self.enabled:
+            return None
+        now = datetime.now(MSK)
+        date_str = now.strftime("%Y-%m-%d")
+        title = analysis_type.strip() if analysis_type else "Анализ"
+        filename = f"{date_str} {title}.md"
+        path = self.vault / "02-Knowledge" / "Здоровье" / "Анализы" / filename
+
+        counter = 2
+        while path.exists():
+            filename = f"{date_str} {title} ({counter}).md"
+            path = self.vault / "02-Knowledge" / "Здоровье" / "Анализы" / filename
+            counter += 1
+
+        self._ensure_dir(path)
+
+        lines = [
+            "---",
+            "type: анализ",
+            f"date: {date_str}",
+            "tags: [здоровье, анализ]",
+            "---",
+            "",
+            f"# {title} — {date_str}",
+            "",
+            "## Расшифровка (Vision AI)",
+            "",
+            analysis_text,
+            "",
+        ]
+
+        path.write_text("\n".join(lines), encoding="utf-8")
+        relative = str(path.relative_to(self.vault)).replace("\\", "/")
+        logger.info("obsidian.medical_analysis", path=relative)
+        return relative
+
+    # ---------------------------------------------------------------
+    # Инициализация структуры баз знаний
+    # ---------------------------------------------------------------
+
+    async def ensure_knowledge_base_structure(self) -> list[str]:
+        """Создать структуру папок для баз знаний (SEO, Здоровье, Бизнес).
+
+        Returns:
+            Список созданных директорий.
+        """
+        if not self.enabled:
+            return []
+
+        dirs = [
+            # Здоровье
+            "02-Knowledge/Здоровье/Анализы",
+            "02-Knowledge/Здоровье/Визиты",
+            "02-Knowledge/Здоровье/Диагнозы",
+            "02-Knowledge/Здоровье/Прививки",
+            "02-Knowledge/Здоровье/Рецепты",
+            # Бизнес — SEO
+            "02-Knowledge/Бизнес/SEO/Основы",
+            "02-Knowledge/Бизнес/SEO/Стратегии",
+            "02-Knowledge/Бизнес/SEO/Семантика",
+            "02-Knowledge/Бизнес/SEO/Инструменты",
+            "02-Knowledge/Бизнес/SEO/Клиенты",
+            "02-Knowledge/Бизнес/SEO/Кейсы",
+            "02-Knowledge/Бизнес/SEO/Обучение",
+            # Бизнес — КДК
+            "02-Knowledge/Бизнес/КДК/Процессы",
+            "02-Knowledge/Бизнес/КДК/Расходники",
+            "02-Knowledge/Бизнес/КДК/Ценообразование",
+            "02-Knowledge/Бизнес/КДК/Маркетинг",
+            "02-Knowledge/Бизнес/КДК/Сотрудники",
+            # Бизнес — Курсы
+            "02-Knowledge/Бизнес/Курсы/Программа",
+            "02-Knowledge/Бизнес/Курсы/Материалы",
+            "02-Knowledge/Бизнес/Курсы/Воронка",
+        ]
+
+        created: list[str] = []
+        for d in dirs:
+            full = self.vault / d
+            if not full.exists():
+                full.mkdir(parents=True, exist_ok=True)
+                created.append(d)
+
+        # README для SEO-базы (если нет)
+        seo_readme = self.vault / "02-Knowledge" / "Бизнес" / "SEO" / "README.md"
+        if not seo_readme.exists():
+            seo_readme.write_text(
+                "---\n"
+                "type: index\n"
+                f"updated: {datetime.now(MSK).strftime('%Y-%m-%d')}\n"
+                "tags: [seo, бизнес, знания]\n"
+                "---\n\n"
+                "# 🔍 SEO — База знаний\n\n"
+                "## Структура\n\n"
+                "- **Основы/** — фундаментальные концепции SEO\n"
+                "- **Стратегии/** — линкбилдинг, контент-маркетинг, техническое SEO\n"
+                "- **Семантика/** — ядро, кластеризация, LSI\n"
+                "- **Инструменты/** — Ahrefs, Screaming Frog, GSC, настройки\n"
+                "- **Клиенты/** — шаблоны отчётов, чеклисты аудита\n"
+                "- **Кейсы/** — реальные результаты и ROI\n"
+                "- **Обучение/** — материалы для курсов\n",
+                encoding="utf-8",
+            )
+            created.append("02-Knowledge/Бизнес/SEO/README.md")
+
+        if created:
+            logger.info("obsidian.kb_structure_created", dirs=len(created))
+        return created
+
 
 # Синглтон
 obsidian = ObsidianWriter()

@@ -2,7 +2,9 @@
 
 from enum import StrEnum
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+
+from src.config import settings
 
 
 class Section(StrEnum):
@@ -82,6 +84,11 @@ def main_menu_keyboard(allowed_sections: list[Section] | None = None) -> ReplyKe
             row = []
     if row:
         buttons.append(row)
+
+    # Кнопка Web App (если webhook_host задан — есть куда открывать)
+    if settings.webhook_host:
+        webapp_url = f"{settings.webhook_host}/webapp"
+        buttons.append([KeyboardButton(text="📊 Дашборд", web_app=WebAppInfo(url=webapp_url))])
 
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 

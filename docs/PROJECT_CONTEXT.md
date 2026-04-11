@@ -49,7 +49,7 @@
 | Пул соединений | asyncpg | — |
 | Кэш/очереди | Redis | 7 |
 | AI routing | OpenRouter | — |
-| Audio | OpenAI Whisper API | — |
+| Audio (STT) | faster-whisper (ЛОКАЛЬНЫЙ) | model "medium", CPU int8 |
 | Embeddings | text-embedding-3-small | 1536 dim |
 | Конфигурация | Pydantic Settings | — |
 | Retry | tenacity | — |
@@ -400,6 +400,36 @@ API_MONTHLY_LIMIT_USD=20.0
 ---
 
 ## 12. Changelog (последние изменения)
+
+### 11 апреля 2026 — File Extractor + Web App (Mini App)
+- **`src/integrations/obsidian/file_extractor.py`** (НОВЫЙ): Модуль извлечения текста из файлов — PDF (PyMuPDF), DOCX (python-docx), XLSX (openpyxl), CSV (stdlib), HTML (BeautifulSoup), TXT. Автоопределение кодировки (utf-8/cp1251/latin-1). Таблицы из DOCX/XLSX конвертируются в pipe-delimited текст
+- **`src/integrations/obsidian/watcher.py`:** Расширен для обработки не-md файлов. Новая функция `_is_supported_file()` проверяет .md + все форматы из file_extractor. Не-md файлы → extract_text → RAG индексация (без парсинга задач). `.md` файлы работают как раньше (задачи + RAG)
+- **`src/webapp/__init__.py`** (НОВЫЙ): Web App API — 6 эндпоинтов: `/api/webapp/tasks` (GET/POST), `/api/webapp/tasks/{id}/complete` (POST), `/api/webapp/goals` (GET), `/api/webapp/health` (GET), `/api/webapp/finances` (GET). Валидация Telegram initData (HMAC-SHA256). Статика из `src/webapp/static/`
+- **`src/webapp/static/`** (НОВЫЙ): Telegram Mini App фронтенд — 4 таба (Задачи, Здоровье, Цели, Финансы). Задачи: создание, отметка done, фокус дня. Здоровье: калории, вода, шаги, пульс, приёмы пищи, тренировки. Цели: прогресс-бары. Финансы: долги, последние транзакции. Адаптивный дизайн под Telegram тему (CSS variables), haptic feedback
+- **`src/bots/hub/keyboard.py`:** Добавлена кнопка `📊 Дашборд` с WebAppInfo в главное меню (отображается при наличии webhook_host)
+- **`src/main.py`:** Интегрирован `setup_webapp_routes()` — API + статика Web App подключаются к aiohttp-приложению
+- **`requirements.txt`:** Добавлены PyMuPDF>=1.24, python-docx>=1.1, openpyxl>=3.1, beautifulsoup4>=4.12
+- **`docs/PROJECT_CONTEXT.md`:** Исправлено описание Audio стека: `faster-whisper (ЛОКАЛЬНЫЙ), model "medium", CPU int8` вместо ошибочного `OpenAI Whisper API`
+
+### 11 апреля 2026 — Базы знаний (RAG): автоэкспорт, SEO, project_id
+- **Автоэкспорт анализов:** `_process_doctor_photo()` (health/handlers.py) теперь после Vision AI → создаёт `.md` в `02-Knowledge/Здоровье/Анализы/` через `obsidian.log_medical_analysis()` + event `health_record` с эмбеддингом для RAG
+- **`src/integrations/obsidian/writer.py`:** Добавлен `log_medical_analysis()` — экспорт расшифровки анализа в Obsidian с frontmatter (type, date, tags); `ensure_knowledge_base_structure()` — создание структуры папок для баз знаний (Здоровье, SEO, КДК, Курсы) + README для SEO
+- **SEO-база:** Метод `ensure_knowledge_base_structure()` создаёт 20 папок в `02-Knowledge/Бизнес/SEO/` (Основы, Стратегии, Семантика, Инструменты, Клиенты, Кейсы, Обучение) + README.md. Все заметки автоматически индексируются watcher.py
+- **RAG project_id filtering:** `_index_note_for_rag()` (watcher.py) теперь для файлов из `05-Projects/{name}/` автоматически lookup-ит project по имени через `get_project_by_name()` и ставит `project_id` на event. Новые events с project_id → `match_events()` может фильтровать по проекту
+- **`src/db/queries.py`:** Добавлен `get_project_by_name()` — поиск активного проекта по имени (case-insensitive, для маппинга папок Obsidian → project_id)
+
+### 11 апреля 2026 — Amazfit Balance 2 (замена Huawei)
+- **Интеграция:** Полная замена HUAWEI Health Kit (OAuth2 + polling) на Amazfit Balance 2 (push-модель через Zepp OS)
+- **Архитектура:** Вместо pull каждые 30 мин — часы сами POST-ят данные на `/api/watch/push` с Bearer API-ключом
+- **`src/integrations/amazfit.py`:** Новый модуль — `process_watch_push()`, `generate_watch_api_key()`, `format_summary()`
+- **`src/integrations/huawei_health.py`:** Удалён (заменён amazfit.py)
+- **`sql/005_watch_tokens.sql`:** Таблица переделана — убраны access_token/refresh_token/expires_at, добавлены api_key (UNIQUE), push_interval_min, is_active, last_push_at
+- **`src/db/queries.py`:** Новые функции — `get_watch_user_by_api_key()`, `update_watch_last_push()`. Убраны OAuth-специфичные параметры из `save_watch_token()`
+- **`src/config.py`:** Убраны huawei_client_id/huawei_client_secret, добавлен amazfit_push_enabled
+- **`src/bots/health/handlers.py`:** /watch_connect генерирует API-ключ (вместо OAuth2 ссылки). Убраны /watch_now и _ensure_valid_token. Добавлена температура кожи
+- **`src/bots/health/scheduler.py`:** Убран pull каждые 30 мин, добавлен check_watch_stale (3 раза в день — алерт если push не приходил >2ч)
+- **`src/main.py`:** Добавлен эндпоинт POST `/api/watch/push` — приём данных от часов
+- **Метрики:** Добавлена температура кожи (skin_temperature) к существующим (шаги, пульс, SpO2, сон, стресс, калории, дистанция)
 
 ### 10 апреля 2026 — VPN-прокси, расписание, фиксы
 - **Инфра:** На VPS установлен xray-core как VLESS Reality клиент → локальный SOCKS5 прокси (0.0.0.0:10808) через Латвию. Причина: Beget потерял маршрут до api.telegram.org (блокировка РФ)

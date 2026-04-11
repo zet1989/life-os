@@ -907,6 +907,27 @@ async def _process_doctor_photo(message: Message, bot: Bot, user_id: int) -> Non
     await safe_answer_voice(message, result, user_id, reply_markup=main_keyboard())
     await save_assistant_reply(user_id, BOT_SOURCE, result)
 
+    # Автоэкспорт в Obsidian + event для RAG
+    try:
+        from src.ai.rag import store_event_embedding
+
+        # Определяем тип анализа из первой строки ответа
+        first_line = result.split("\n")[0].strip("# *🩺📋").strip()
+        analysis_type = first_line[:80] if first_line else "Анализ"
+
+        relative_path = await obsidian.log_medical_analysis(result, analysis_type)
+
+        event = await create_event(
+            user_id=user_id,
+            event_type="health_record",
+            bot_source=BOT_SOURCE,
+            raw_text=result[:4000],
+            json_data={"type": "medical_analysis", "source_file": relative_path or ""},
+        )
+        await store_event_embedding(event["id"], f"[Анализ: {analysis_type}]\n{result}", user_id=user_id, bot_source=BOT_SOURCE)
+    except Exception:
+        logger.exception("doctor_photo.export_error")
+
 
 def _format_meal_response(raw_result: str, json_data: dict | None, user_id: int = 0) -> str:
     """Строим богатую карточку КБЖУ + оценка + советы из json_data."""
@@ -1025,7 +1046,7 @@ def _extract_json(text: str) -> dict | None:
         return None
 
 
-# === ⌚ Часы (HUAWEI Health Kit) ===
+# === ⌚ Часы (Amazfit Balance 2 — push API) ===
 
 @router.message(F.text == "⌚ Часы")
 async def mode_watch(message: Message, db_user: dict) -> None:
@@ -1039,11 +1060,12 @@ async def mode_watch(message: Message, db_user: dict) -> None:
     if not token:
         await message.answer(
             "⌚ <b>Смарт-часы не подключены</b>\n\n"
-            "Подключи HUAWEI WATCH для автоматического трекинга:\n"
+            "Подключи Amazfit Balance 2 для автоматического трекинга:\n"
             "• 🫀 Пульс и SpO2\n"
             "• 🚶 Шаги и калории\n"
             "• 😴 Анализ сна\n"
-            "• 😰 Уровень стресса\n\n"
+            "• 😰 Уровень стресса\n"
+            "• 🌡 Температура кожи\n\n"
             "Для подключения: /watch_connect",
             reply_markup=main_keyboard(),
         )
@@ -1052,10 +1074,13 @@ async def mode_watch(message: Message, db_user: dict) -> None:
     # Показать последние данные
     metrics = await get_today_watch_metrics(user_id)
     if not metrics:
+        last_push = token.get("last_push_at")
+        last_str = last_push.strftime("%d.%m %H:%M") if last_push and hasattr(last_push, "strftime") else "никогда"
         await message.answer(
-            "⌚ Часы подключены, но сегодня данных пока нет.\n"
-            "Данные обновляются автоматически каждые 30 минут.\n\n"
-            "/watch_now — запросить данные сейчас\n"
+            f"⌚ Часы подключены (<b>{token.get('device_name', 'Amazfit Balance 2')}</b>)\n"
+            f"Последний push: {last_str}\n"
+            f"Интервал: каждые {token.get('push_interval_min', 15)} мин\n\n"
+            "Сегодня данных пока нет. Часы отправят данные автоматически.\n\n"
             "/watch_disconnect — отвязать часы",
             reply_markup=main_keyboard(),
         )
@@ -1086,6 +1111,9 @@ async def mode_watch(message: Message, db_user: dict) -> None:
         emoji = "😌" if level < 30 else "😐" if level < 60 else "😰"
         text += f"{emoji} Стресс: <b>{level}/100</b>\n"
 
+    if "skin_temperature" in last:
+        text += f"🌡 Температура: <b>{last['skin_temperature']}°C</b>\n"
+
     sl = last.get("sleep")
     if sl:
         text += (
@@ -1097,75 +1125,49 @@ async def mode_watch(message: Message, db_user: dict) -> None:
 
     text += (
         f"\n⏰ Обновлено: {metrics[0]['timestamp'].strftime('%H:%M') if hasattr(metrics[0]['timestamp'], 'strftime') else '?'}\n"
-        f"\n/watch_now — обновить сейчас\n"
-        f"/watch_disconnect — отвязать часы"
+        f"\n/watch_disconnect — отвязать часы"
     )
     await message.answer(text, reply_markup=main_keyboard())
 
 
 @router.message(Command("watch_connect"))
 async def cmd_watch_connect(message: Message, db_user: dict) -> None:
-    """Начать OAuth2 авторизацию с HUAWEI Health Kit."""
-    from src.integrations.huawei_health import get_huawei_client
+    """Сгенерировать API-ключ для push-интеграции с Amazfit Balance 2."""
+    from src.integrations.amazfit import generate_watch_api_key
+    from src.db.queries import get_watch_token, save_watch_token
+    from src.config import settings
 
-    client = get_huawei_client()
-    if not client:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+
+    # Если уже подключены — показать ключ
+    existing = await get_watch_token(user_id)
+    if existing:
         await message.answer(
-            "⌚ Интеграция с HUAWEI Health Kit не настроена.\n"
-            "Нужно задать HUAWEI_CLIENT_ID и HUAWEI_CLIENT_SECRET в .env",
+            "⌚ <b>Часы уже подключены</b>\n\n"
+            f"Устройство: {existing.get('device_name', 'Amazfit Balance 2')}\n"
+            f"API-ключ: <code>{existing['api_key']}</code>\n\n"
+            "Чтобы переподключить, сначала отвяжи: /watch_disconnect",
             reply_markup=main_keyboard(),
         )
         return
 
-    from src.config import settings
-    redirect_uri = f"{settings.webhook_host}/huawei/callback" if settings.webhook_host else "https://localhost/huawei/callback"
-    auth_url = client.get_auth_url(redirect_uri)
+    api_key = generate_watch_api_key()
+    webhook_host = settings.webhook_host or "https://your-server.com"
+    push_url = f"{webhook_host}/api/watch/push"
+
+    await save_watch_token(user_id=user_id, api_key=api_key)
 
     await message.answer(
-        "⌚ <b>Подключение HUAWEI WATCH</b>\n\n"
-        "1. Перейди по ссылке ниже\n"
-        "2. Войди в HUAWEI ID\n"
-        "3. Разреши доступ к Health данным\n"
-        "4. Скопируй код из URL и отправь мне\n\n"
-        f'<a href="{auth_url}">🔗 Авторизоваться в HUAWEI Health</a>\n\n'
-        "После авторизации отправь мне код из адресной строки.",
+        "⌚ <b>Подключение Amazfit Balance 2</b>\n\n"
+        "1. Установи мини-приложение Life OS на часы (Zepp OS)\n"
+        "2. Введи в настройках приложения:\n\n"
+        f"   <b>URL:</b> <code>{push_url}</code>\n"
+        f"   <b>API-ключ:</b> <code>{api_key}</code>\n\n"
+        "3. Часы будут автоматически отправлять данные каждые 15 мин\n\n"
+        "💡 Формат push-запроса: POST с JSON-телом и заголовком\n"
+        "<code>Authorization: Bearer {api_key}</code>",
         reply_markup=main_keyboard(),
-        disable_web_page_preview=True,
     )
-
-
-@router.message(Command("watch_now"))
-async def cmd_watch_now(message: Message, db_user: dict) -> None:
-    """Запросить данные с часов прямо сейчас."""
-    from src.db.queries import get_watch_token
-    from src.integrations.huawei_health import get_huawei_client
-
-    user_id = message.from_user.id  # type: ignore[union-attr]
-    token = await get_watch_token(user_id)
-    if not token:
-        await message.answer("⌚ Часы не подключены. /watch_connect", reply_markup=main_keyboard())
-        return
-
-    client = get_huawei_client()
-    if not client:
-        await message.answer("⌚ HUAWEI Health Kit не настроен.", reply_markup=main_keyboard())
-        return
-
-    processing = await message.answer("⏳ Запрашиваю данные с часов...")
-
-    # Проверить/обновить токен
-    access_token = await _ensure_valid_token(user_id, token, client)
-    if not access_token:
-        await processing.edit_text("❌ Токен истёк. Переподключи часы: /watch_connect")
-        return
-
-    data = await client.pull_and_save(user_id, access_token)
-    if not data or len(data) <= 3:  # только source/period_start/period_end
-        await processing.edit_text("⌚ Нет новых данных с часов.")
-        return
-
-    from src.integrations.huawei_health import _format_summary
-    await processing.edit_text(f"✅ {_format_summary(data)}")
 
 
 @router.message(Command("watch_disconnect"))
@@ -1176,30 +1178,3 @@ async def cmd_watch_disconnect(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     await delete_watch_token(user_id)
     await message.answer("⌚ Часы отвязаны.", reply_markup=main_keyboard())
-
-
-async def _ensure_valid_token(user_id: int, token: dict, client) -> str | None:
-    """Проверить срок токена, обновить если нужно."""
-    from datetime import timezone as tz
-    from src.db.queries import save_watch_token
-
-    expires = token.get("expires_at")
-    if expires and hasattr(expires, "timestamp"):
-        if expires.timestamp() > datetime.now(tz.utc).timestamp() + 300:
-            return token["access_token"]
-
-    # Refresh
-    try:
-        new_tokens = await client.refresh_access_token(token["refresh_token"])
-        expires_in = new_tokens.get("expires_in", 3600)
-        new_expires = datetime.now(tz.utc) + __import__("datetime").timedelta(seconds=expires_in)
-        await save_watch_token(
-            user_id=user_id,
-            access_token=new_tokens["access_token"],
-            refresh_token=new_tokens.get("refresh_token", token["refresh_token"]),
-            expires_at=new_expires,
-        )
-        return new_tokens["access_token"]
-    except Exception:
-        logger.warning("watch_token_refresh_failed", user_id=user_id)
-        return None

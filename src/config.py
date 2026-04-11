@@ -57,9 +57,8 @@ class Settings(BaseSettings):
     obsidian_sync_enabled: bool = False
     obsidian_watch_enabled: bool = False
 
-    # --- HUAWEI Health Kit (смарт-часы) ---
-    huawei_client_id: str = ""
-    huawei_client_secret: str = ""
+    # --- Amazfit Watch (push API) ---
+    amazfit_push_enabled: bool = True  # принимать push-данные от часов
 
     # --- Telegram proxy (SOCKS5 через xray для обхода блокировки) ---
     telegram_proxy: str = ""  # например socks5://127.0.0.1:10808

@@ -328,12 +328,12 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # HUAWEI Watch — pull данных каждые 30 мин
+    # Amazfit Watch — проверка что часы отправляют данные (push-модель)
     scheduler.add_job(
-        pull_watch_data,
-        trigger=CronTrigger(minute="*/30", timezone=MSK),
+        check_watch_stale,
+        trigger=CronTrigger(hour="9,13,18", minute=0, timezone=MSK),
         args=[bot],
-        id="watch_data_pull",
+        id="watch_stale_check",
         replace_existing=True,
     )
 
@@ -385,54 +385,28 @@ async def _check_medications_for_user(bot: Bot, user_id: int, current_time: str)
         logger.exception("medication_check_failed", user_id=user_id)
 
 
-# === HUAWEI Watch — автоматический pull данных ===
+# === Amazfit Watch — проверка push-данных ===
 
-async def pull_watch_data(bot: Bot) -> None:
-    """Запросить данные со смарт-часов всех подключённых пользователей."""
-    from src.integrations.huawei_health import get_huawei_client
+async def check_watch_stale(bot: Bot) -> None:
+    """Проверить, что часы отправляют данные. Алерт если push давно не приходил."""
     from src.db.queries import get_all_watch_users
-
-    client = get_huawei_client()
-    if not client:
-        return  # HUAWEI не настроен — skip
 
     try:
         users = await get_all_watch_users()
+        now = datetime.now(MSK)
         for wt in users:
-            await _pull_watch_for_user(bot, wt, client)
-    except Exception:
-        logger.exception("watch_pull_failed")
-
-
-async def _pull_watch_for_user(bot: Bot, watch_token: dict, client) -> None:
-    """Pull данных для одного пользователя."""
-    user_id = watch_token["user_id"]
-    try:
-        # Проверить/обновить токен
-        from datetime import timezone as tz
-        from src.db.queries import save_watch_token
-
-        expires = watch_token.get("expires_at")
-        access_token = watch_token["access_token"]
-
-        if expires and hasattr(expires, "timestamp"):
-            if expires.timestamp() < datetime.now(tz.utc).timestamp() + 300:
-                # Нужен refresh
-                try:
-                    new_tokens = await client.refresh_access_token(watch_token["refresh_token"])
-                    expires_in = new_tokens.get("expires_in", 3600)
-                    new_expires = datetime.now(tz.utc) + timedelta(seconds=expires_in)
-                    await save_watch_token(
-                        user_id=user_id,
-                        access_token=new_tokens["access_token"],
-                        refresh_token=new_tokens.get("refresh_token", watch_token["refresh_token"]),
-                        expires_at=new_expires,
+            last_push = wt.get("last_push_at")
+            if not last_push:
+                continue
+            # Если push не приходил больше 2 часов — напомнить
+            if hasattr(last_push, "timestamp"):
+                hours_ago = (now.timestamp() - last_push.timestamp()) / 3600
+                if hours_ago > 2:
+                    await safe_send(
+                        bot,
+                        wt["user_id"],
+                        f"⌚ Данные с часов не обновлялись {int(hours_ago)} ч.\n"
+                        "Проверь, что Amazfit Balance 2 подключены и мини-приложение активно.",
                     )
-                    access_token = new_tokens["access_token"]
-                except Exception:
-                    logger.warning("watch_refresh_skip", user_id=user_id)
-                    return
-
-        await client.pull_and_save(user_id, access_token)
     except Exception:
-        logger.exception("watch_pull_user_failed", user_id=user_id)
+        logger.exception("watch_stale_check_failed")

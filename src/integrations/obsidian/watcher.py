@@ -14,6 +14,7 @@ from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreat
 
 from src.config import settings
 from src.integrations.obsidian.task_parser import parse_tasks
+from src.integrations.obsidian.file_extractor import SUPPORTED_EXTENSIONS, extract_text
 
 logger = structlog.get_logger()
 
@@ -29,7 +30,7 @@ class _VaultHandler(FileSystemEventHandler):
         self.user_id = user_id
 
     def on_modified(self, event: FileModifiedEvent) -> None:  # type: ignore[override]
-        if event.is_directory or not str(event.src_path).endswith(".md"):
+        if event.is_directory or not _is_supported_file(event.src_path):
             return
         self.loop.call_soon_threadsafe(
             asyncio.ensure_future,
@@ -37,7 +38,7 @@ class _VaultHandler(FileSystemEventHandler):
         )
 
     def on_created(self, event: FileCreatedEvent) -> None:  # type: ignore[override]
-        if event.is_directory or not str(event.src_path).endswith(".md"):
+        if event.is_directory or not _is_supported_file(event.src_path):
             return
         self.loop.call_soon_threadsafe(
             asyncio.ensure_future,
@@ -45,19 +46,44 @@ class _VaultHandler(FileSystemEventHandler):
         )
 
 
+def _is_supported_file(filepath: str) -> bool:
+    """Проверить, поддерживается ли файл (md + все форматы из file_extractor)."""
+    ext = Path(filepath).suffix.lower()
+    return ext == ".md" or ext in SUPPORTED_EXTENSIONS
+
+
 async def _process_file(filepath: str, user_id: int) -> None:
-    """Прочитать файл, распарсить задачи, обновить БД. Для Knowledge-папок — индекс для RAG."""
+    """Прочитать файл, распарсить задачи, обновить БД. Для Knowledge-папок — индекс для RAG.
+
+    .md файлы — парсинг задач + RAG индексация.
+    Остальные форматы (PDF, DOCX, XLSX, CSV, HTML, TXT) — только RAG индексация.
+    """
     from src.db.queries import upsert_obsidian_task
 
     path = Path(filepath)
     vault = Path(settings.obsidian_vault_path)
+    ext = path.suffix.lower()
+    relative = str(path.relative_to(vault))
+
+    # --- Не .md файлы: извлекаем текст и индексируем для RAG ---
+    if ext != ".md":
+        content = extract_text(path)
+        if not content or len(content.strip()) < 50:
+            logger.debug("obsidian.file_too_short", file=relative, ext=ext)
+            return
+
+        top_folder = relative.split("/")[0] if "/" in relative else relative.split("\\")[0] if "\\" in relative else ""
+        if top_folder in _RAG_FOLDERS:
+            logger.info("obsidian.extracting_file", file=relative, ext=ext, length=len(content))
+            await _index_note_for_rag(user_id, relative, content)
+        return
+
+    # --- .md файлы: задачи + RAG ---
     try:
         content = path.read_text(encoding="utf-8")
     except Exception as e:
         logger.warning("obsidian.read_error", file=filepath, error=str(e))
         return
-
-    relative = str(path.relative_to(vault))
 
     # Kanban board — отдельная обработка
     if relative.replace("\\", "/") == "03-Dashboards/Kanban.md":
@@ -146,8 +172,9 @@ async def _index_note_for_rag(user_id: int, relative_path: str, content: str) ->
 
     Большие файлы разбиваются на чанки по ~4000 символов с перекрытием.
     Каждый чанк → отдельный event в pgvector.
+    Файлы из 05-Projects/{name}/ автоматически получают project_id.
     """
-    from src.db.queries import create_event, get_obsidian_note_events, update_event_raw_text, delete_event
+    from src.db.queries import create_event, get_obsidian_note_events, update_event_raw_text, delete_event, get_project_by_name
     from src.ai.rag import store_event_embedding
     import re
 
@@ -158,6 +185,19 @@ async def _index_note_for_rag(user_id: int, relative_path: str, content: str) ->
 
     if len(text) < 30:
         return
+
+    # Определяем project_id для файлов из 05-Projects/{name}/
+    project_id: int | None = None
+    normalized = relative_path.replace("\\", "/")
+    parts = normalized.split("/")
+    if len(parts) >= 2 and parts[0] == "05-Projects":
+        project_name = parts[1]
+        try:
+            proj = await get_project_by_name(project_name)
+            if proj:
+                project_id = proj["project_id"]
+        except Exception:
+            logger.warning("obsidian.project_lookup_failed", name=project_name)
 
     # Чанкинг: разбиваем текст на куски
     chunks = _chunk_text(text)
@@ -195,10 +235,11 @@ async def _index_note_for_rag(user_id: int, relative_path: str, content: str) ->
                     bot_source="obsidian",
                     raw_text=chunk[:4000],
                     json_data=json_data,
+                    project_id=project_id,
                 )
                 await store_event_embedding(event["id"], embed_text, user_id=user_id, bot_source="obsidian")
                 logger.info("obsidian.chunk_indexed", file=relative_path, chunk=idx + 1, total=len(chunks),
-                            event_id=event["id"])
+                            event_id=event["id"], project_id=project_id)
 
         # Удаляем лишние чанки (если файл стал короче)
         for old_idx, old_event in existing_by_idx.items():
