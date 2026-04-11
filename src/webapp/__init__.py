@@ -1,6 +1,6 @@
-"""Web App (Telegram Mini App) — API endpoints.
+﻿"""Web App (Telegram Mini App) вЂ” API endpoints.
 
-Все эндпоинты защищены валидацией Telegram initData.
+Р’СЃРµ СЌРЅРґРїРѕРёРЅС‚С‹ Р·Р°С‰РёС‰РµРЅС‹ РІР°Р»РёРґР°С†РёРµР№ Telegram initData.
 """
 
 import hashlib
@@ -17,9 +17,9 @@ logger = structlog.get_logger()
 
 
 def validate_init_data(init_data: str, bot_token: str, max_age: int = 86400) -> dict | None:
-    """Валидация Telegram Web App initData.
+    """Р’Р°Р»РёРґР°С†РёСЏ Telegram Web App initData.
 
-    Возвращает parsed данные (включая user) или None при невалидном запросе.
+    Р’РѕР·РІСЂР°С‰Р°РµС‚ parsed РґР°РЅРЅС‹Рµ (РІРєР»СЋС‡Р°СЏ user) РёР»Рё None РїСЂРё РЅРµРІР°Р»РёРґРЅРѕРј Р·Р°РїСЂРѕСЃРµ.
     https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
     """
     parsed = parse_qs(init_data, keep_blank_values=True)
@@ -27,7 +27,7 @@ def validate_init_data(init_data: str, bot_token: str, max_age: int = 86400) -> 
     if not received_hash:
         return None
 
-    # Проверяем auth_date (не старше max_age)
+    # РџСЂРѕРІРµСЂСЏРµРј auth_date (РЅРµ СЃС‚Р°СЂС€Рµ max_age)
     auth_date_str = parsed.get("auth_date", [None])[0]
     if not auth_date_str:
         return None
@@ -38,7 +38,7 @@ def validate_init_data(init_data: str, bot_token: str, max_age: int = 86400) -> 
     if time.time() - auth_date > max_age:
         return None
 
-    # Собираем data-check-string
+    # РЎРѕР±РёСЂР°РµРј data-check-string
     items = []
     for key in sorted(parsed.keys()):
         if key == "hash":
@@ -53,7 +53,7 @@ def validate_init_data(init_data: str, bot_token: str, max_age: int = 86400) -> 
     if not hmac.compare_digest(computed_hash, received_hash):
         return None
 
-    # Парсим user
+    # РџР°СЂСЃРёРј user
     result = {k: v[0] for k, v in parsed.items()}
     if "user" in result:
         try:
@@ -65,7 +65,7 @@ def validate_init_data(init_data: str, bot_token: str, max_age: int = 86400) -> 
 
 
 def _get_user_id(request: web.Request) -> int | None:
-    """Извлечь и валидировать user_id из Telegram initData (заголовок X-Telegram-Init-Data)."""
+    """РР·РІР»РµС‡СЊ Рё РІР°Р»РёРґРёСЂРѕРІР°С‚СЊ user_id РёР· Telegram initData (Р·Р°РіРѕР»РѕРІРѕРє X-Telegram-Init-Data)."""
     from src.config import settings
 
     init_data = request.headers.get("X-Telegram-Init-Data", "")
@@ -73,7 +73,7 @@ def _get_user_id(request: web.Request) -> int | None:
         logger.warning("webapp.auth_no_init_data")
         return None
 
-    # Определяем токен бота
+    # РћРїСЂРµРґРµР»СЏРµРј С‚РѕРєРµРЅ Р±РѕС‚Р°
     token = settings.bot_token_unified or settings.bot_token_master
     if not token:
         logger.warning("webapp.auth_no_token")
@@ -93,11 +93,21 @@ def _get_user_id(request: web.Request) -> int | None:
     return None
 
 
+def _auth_error_response(request: web.Request) -> web.Response:
+    """Р’РѕР·РІСЂР°С‰Р°РµС‚ 401 СЃ РґРёР°РіРЅРѕСЃС‚РёРєРѕР№."""
+    init_data = request.headers.get("X-Telegram-Init-Data", "")
+    reason = "no_init_data" if not init_data else "validation_failed"
+    return web.json_response(
+        {"error": "unauthorized", "reason": reason, "init_data_len": len(init_data)},
+        status=401,
+    )
+
+
 async def api_tasks_today(request: web.Request) -> web.Response:
-    """GET /api/webapp/tasks — задачи на сегодня."""
+    """GET /api/webapp/tasks вЂ” Р·Р°РґР°С‡Рё РЅР° СЃРµРіРѕРґРЅСЏ."""
     user_id = _get_user_id(request)
     if not user_id:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return _auth_error_response(request)
 
     from src.db.queries import get_today_tasks, get_today_focus
 
@@ -111,10 +121,10 @@ async def api_tasks_today(request: web.Request) -> web.Response:
 
 
 async def api_goals(request: web.Request) -> web.Response:
-    """GET /api/webapp/goals — активные цели."""
+    """GET /api/webapp/goals вЂ” Р°РєС‚РёРІРЅС‹Рµ С†РµР»Рё."""
     user_id = _get_user_id(request)
     if not user_id:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return _auth_error_response(request)
 
     from src.db.queries import get_active_goals
 
@@ -123,10 +133,10 @@ async def api_goals(request: web.Request) -> web.Response:
 
 
 async def api_health_today(request: web.Request) -> web.Response:
-    """GET /api/webapp/health — здоровье за сегодня (еда, вода, тренировки, часы)."""
+    """GET /api/webapp/health вЂ” Р·РґРѕСЂРѕРІСЊРµ Р·Р° СЃРµРіРѕРґРЅСЏ (РµРґР°, РІРѕРґР°, С‚СЂРµРЅРёСЂРѕРІРєРё, С‡Р°СЃС‹)."""
     user_id = _get_user_id(request)
     if not user_id:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return _auth_error_response(request)
 
     from src.db.queries import get_today_meals, get_today_water, get_today_workouts, get_today_watch_metrics
 
@@ -135,7 +145,7 @@ async def api_health_today(request: web.Request) -> web.Response:
     workouts = await get_today_workouts(user_id)
     watch = await get_today_watch_metrics(user_id)
 
-    # Считаем итого калории
+    # РЎС‡РёС‚Р°РµРј РёС‚РѕРіРѕ РєР°Р»РѕСЂРёРё
     total_kcal = 0
     for m in meals:
         jd = m.get("json_data") or {}
@@ -146,7 +156,7 @@ async def api_health_today(request: web.Request) -> web.Response:
                 jd = {}
         total_kcal += jd.get("calories", 0)
 
-    # Считаем итого воды
+    # РЎС‡РёС‚Р°РµРј РёС‚РѕРіРѕ РІРѕРґС‹
     total_water = 0
     for w in water:
         jd = w.get("json_data") or {}
@@ -167,10 +177,10 @@ async def api_health_today(request: web.Request) -> web.Response:
 
 
 async def api_finances(request: web.Request) -> web.Response:
-    """GET /api/webapp/finances — последние транзакции + сводка."""
+    """GET /api/webapp/finances вЂ” РїРѕСЃР»РµРґРЅРёРµ С‚СЂР°РЅР·Р°РєС†РёРё + СЃРІРѕРґРєР°."""
     user_id = _get_user_id(request)
     if not user_id:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return _auth_error_response(request)
 
     from src.db.queries import get_recent_finances, get_debts_summary
 
@@ -184,10 +194,10 @@ async def api_finances(request: web.Request) -> web.Response:
 
 
 async def api_projects(request: web.Request) -> web.Response:
-    """GET /api/webapp/projects — проекты пользователя."""
+    """GET /api/webapp/projects вЂ” РїСЂРѕРµРєС‚С‹ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ."""
     user_id = _get_user_id(request)
     if not user_id:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return _auth_error_response(request)
 
     from src.db.queries import get_accessible_projects
 
@@ -196,10 +206,10 @@ async def api_projects(request: web.Request) -> web.Response:
 
 
 async def api_task_complete(request: web.Request) -> web.Response:
-    """POST /api/webapp/tasks/{task_id}/complete — отметить задачу выполненной."""
+    """POST /api/webapp/tasks/{task_id}/complete вЂ” РѕС‚РјРµС‚РёС‚СЊ Р·Р°РґР°С‡Сѓ РІС‹РїРѕР»РЅРµРЅРЅРѕР№."""
     user_id = _get_user_id(request)
     if not user_id:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return _auth_error_response(request)
 
     task_id_str = request.match_info.get("task_id", "")
     try:
@@ -214,10 +224,10 @@ async def api_task_complete(request: web.Request) -> web.Response:
 
 
 async def api_task_create(request: web.Request) -> web.Response:
-    """POST /api/webapp/tasks — создать задачу."""
+    """POST /api/webapp/tasks вЂ” СЃРѕР·РґР°С‚СЊ Р·Р°РґР°С‡Сѓ."""
     user_id = _get_user_id(request)
     if not user_id:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return _auth_error_response(request)
 
     try:
         body = await request.json()
@@ -242,7 +252,7 @@ async def api_task_create(request: web.Request) -> web.Response:
 
 
 def setup_webapp_routes(app: web.Application) -> None:
-    """Зарегистрировать все Web App маршруты."""
+    """Р—Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°С‚СЊ РІСЃРµ Web App РјР°СЂС€СЂСѓС‚С‹."""
     import os
 
     # API
@@ -257,7 +267,7 @@ def setup_webapp_routes(app: web.Application) -> None:
     # Static files (HTML/CSS/JS)
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.isdir(static_dir):
-        # SPA entry point — /webapp и /webapp/
+        # SPA entry point вЂ” /webapp Рё /webapp/
         async def webapp_index(request: web.Request) -> web.FileResponse:
             return web.FileResponse(os.path.join(static_dir, "index.html"))
 

@@ -22,7 +22,12 @@ async function api(path, options = {}) {
         },
     });
     if (!res.ok) {
-        throw new Error(`API ${res.status}`);
+        let detail = `API ${res.status}`;
+        try {
+            const body = await res.json();
+            if (body.reason) detail += ` (${body.reason}, data_len=${body.init_data_len})`;
+        } catch (_) {}
+        throw new Error(detail);
     }
     return res.json();
 }
