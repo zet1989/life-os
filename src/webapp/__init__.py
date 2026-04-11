@@ -238,12 +238,19 @@ def setup_webapp_routes(app: web.Application) -> None:
     # Static files (HTML/CSS/JS)
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.isdir(static_dir):
-        app.router.add_static("/webapp/", static_dir, name="webapp_static")
-
-        # SPA fallback — index.html
+        # SPA entry point — /webapp и /webapp/
         async def webapp_index(request: web.Request) -> web.FileResponse:
             return web.FileResponse(os.path.join(static_dir, "index.html"))
 
+        async def webapp_file(request: web.Request) -> web.FileResponse:
+            filename = request.match_info["filename"]
+            filepath = os.path.join(static_dir, filename)
+            if not os.path.isfile(filepath) or ".." in filename:
+                raise web.HTTPNotFound()
+            return web.FileResponse(filepath)
+
         app.router.add_get("/webapp", webapp_index)
+        app.router.add_get("/webapp/", webapp_index)
+        app.router.add_get("/webapp/{filename}", webapp_file)
 
     logger.info("webapp.routes_registered")
