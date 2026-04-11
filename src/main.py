@@ -117,7 +117,10 @@ def _collect_unified() -> dict:
 
 
 async def _run_unified_polling() -> None:
-    """Запуск единого бота в режиме Long Polling."""
+    """Запуск единого бота в режиме Long Polling + aiohttp для webapp."""
+    import asyncio
+    from aiohttp import web
+
     cfg = _collect_unified()
 
     bot = _make_bot(cfg["token"])
@@ -136,11 +139,32 @@ async def _run_unified_polling() -> None:
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("unified_polling_started", sections=len(cfg["routers"]) - 1)
 
+    # Запускаем aiohttp-сервер для webapp/status даже в polling-режиме
+    app = web.Application()
+
+    async def health_check(request: web.Request) -> web.Response:
+        from src.core.health import get_status
+        status = await get_status()
+        code = 200 if status["ok"] else 503
+        return web.json_response(status, status=code)
+
+    app.router.add_get("/status", health_check)
+
+    from src.webapp import setup_webapp_routes
+    setup_webapp_routes(app)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", settings.webhook_port or 8443)
+    await site.start()
+    logger.info("webapp_server_started", port=settings.webhook_port or 8443, mode="polling")
+
     try:
         await dp.start_polling(bot)
     finally:
         for sched in schedulers:
             sched.shutdown(wait=False)
+        await runner.cleanup()
 
 
 async def _run_unified_webhook(app, instances, schedulers) -> None:
