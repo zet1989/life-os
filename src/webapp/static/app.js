@@ -2,6 +2,7 @@
 
 const tg = window.Telegram?.WebApp;
 const initData = tg?.initData || "";
+const initDataUnsafe = tg?.initDataUnsafe || {};
 
 // Настройка Telegram Web App
 if (tg) {
@@ -10,16 +11,29 @@ if (tg) {
     tg.enableClosingConfirmation();
 }
 
+// Debug: логируем initData
+console.log("TG initData length:", initData.length);
+console.log("TG initDataUnsafe:", JSON.stringify(initDataUnsafe));
+console.log("TG user:", JSON.stringify(initDataUnsafe?.user));
+
 // === API ===
 
 async function api(path, options = {}) {
+    // Собираем auth headers
+    const headers = {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+    };
+    if (initData) {
+        headers["X-Telegram-Init-Data"] = initData;
+    }
+    // Fallback: передаём user_id напрямую если initData пуст
+    if (!initData && initDataUnsafe?.user?.id) {
+        headers["X-Telegram-User-Id"] = String(initDataUnsafe.user.id);
+    }
     const res = await fetch(path, {
         ...options,
-        headers: {
-            "Content-Type": "application/json",
-            "X-Telegram-Init-Data": initData,
-            ...(options.headers || {}),
-        },
+        headers,
     });
     if (!res.ok) {
         let detail = `API ${res.status}`;
