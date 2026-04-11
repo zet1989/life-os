@@ -11,11 +11,12 @@
     <div id="app">
         <!-- Навигация -->
         <nav class="tabs">
-            <button class="tab active" data-tab="tasks">📋 Задачи</button>
-            <button class="tab" data-tab="projects">📁 Проекты</button>
-            <button class="tab" data-tab="health">🏥 Здоровье</button>
-            <button class="tab" data-tab="goals">🎯 Цели</button>
-            <button class="tab" data-tab="finances">💰 Финансы</button>
+            <button class="tab active" data-tab="tasks">📋</button>
+            <button class="tab" data-tab="projects">📁</button>
+            <button class="tab" data-tab="health">🏥</button>
+            <button class="tab" data-tab="goals">🎯</button>
+            <button class="tab" data-tab="finances">💰</button>
+            <button class="tab" data-tab="chat">💬</button>
         </nav>
 
         <!-- Задачи -->
@@ -156,6 +157,45 @@
             <h3>Последние транзакции</h3>
             <div id="finances-list" class="list"></div>
         </section>
+
+        <!-- Чат с ИИ -->
+        <section id="tab-chat" class="tab-content">
+            <div class="chat-container">
+                <div id="chat-messages" class="chat-messages">
+                    <div class="chat-welcome">
+                        <div class="chat-welcome-icon">🤖</div>
+                        <div class="chat-welcome-text">Привет! Я твой AI-ассистент Life OS. Спроси меня о чём угодно — планирование, продуктивность, идеи.</div>
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="chat-input" placeholder="Написать сообщение..." autocomplete="off">
+                    <button id="btn-send-chat" class="btn-send">➤</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Overlay: детали проекта -->
+        <div id="project-detail" class="overlay hidden">
+            <div class="overlay-header">
+                <button class="btn-back" onclick="closeProjectDetail()">← Назад</button>
+                <h2 id="project-detail-name"></h2>
+            </div>
+            <div class="overlay-body">
+                <div id="project-detail-add" class="project-add-task">
+                    <input type="text" id="project-task-text" placeholder="Новая задача..." autocomplete="off">
+                    <div class="form-row">
+                        <input type="date" id="project-task-date">
+                        <select id="project-task-priority">
+                            <option value="normal">🔵 Обычный</option>
+                            <option value="high">🟠 Высокий</option>
+                            <option value="critical">🔴 Критичный</option>
+                        </select>
+                        <button id="btn-project-add-task" class="btn-primary btn-sm">+</button>
+                    </div>
+                </div>
+                <div id="project-tasks-list" class="list"></div>
+            </div>
+        </div>
     </div>
 
     <div id="loader" class="loader">

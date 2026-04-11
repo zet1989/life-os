@@ -1788,6 +1788,9 @@ async def get_category_breakdown(user_id: int) -> list[dict]:
         user_id,
     )
     return [dict(r) for r in rows]
+
+
+async def get_today_watch_metrics(user_id: int) -> list[dict]:
     """Получить сегодняшние метрики с часов."""
     rows = await get_pool().fetch(
         """SELECT json_data, timestamp, raw_text FROM events
@@ -1797,5 +1800,16 @@ async def get_category_breakdown(user_id: int) -> list[dict]:
           AND timestamp >= CURRENT_DATE
         ORDER BY timestamp DESC""",
         user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_project_tasks(user_id: int, project_id: int) -> list[dict]:
+    """Все задачи проекта (невыполненные сначала)."""
+    rows = await get_pool().fetch(
+        """SELECT * FROM tasks
+           WHERE user_id = $1 AND project_id = $2
+           ORDER BY is_done, due_date NULLS LAST, due_time NULLS LAST""",
+        user_id, project_id,
     )
     return [dict(r) for r in rows]

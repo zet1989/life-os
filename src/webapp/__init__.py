@@ -230,6 +230,66 @@ async def api_projects(request: web.Request) -> web.Response:
     return _json_response({"projects": [dict(p) for p in projects]})
 
 
+async def api_project_tasks(request: web.Request) -> web.Response:
+    """GET /api/webapp/projects/{project_id}/tasks — задачи проекта."""
+    user_id = _get_user_id(request)
+    if not user_id:
+        return _auth_error_response(request)
+
+    project_id_str = request.match_info.get("project_id", "")
+    try:
+        project_id = int(project_id_str)
+    except ValueError:
+        return web.json_response({"error": "invalid project_id"}, status=400)
+
+    from src.db.queries import get_project_tasks
+
+    tasks = await get_project_tasks(user_id, project_id)
+    return _json_response({"tasks": [dict(t) for t in tasks]})
+
+
+async def api_chat(request: web.Request) -> web.Response:
+    """POST /api/webapp/chat — отправить сообщение ИИ-ассистенту."""
+    user_id = _get_user_id(request)
+    if not user_id:
+        return _auth_error_response(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    message = body.get("message", "").strip()
+    if not message:
+        return web.json_response({"error": "message required"}, status=400)
+
+    from src.ai.router import chat as ai_chat
+
+    system_prompt = (
+        "Ты — Life OS, персональный AI-ассистент пользователя. "
+        "Отвечай кратко и по делу на русском языке. "
+        "Ты помогаешь с планированием, продуктивностью, здоровьем, финансами и целями."
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": message},
+    ]
+
+    try:
+        reply = await ai_chat(
+            messages=messages,
+            task_type="general_chat",
+            user_id=user_id,
+            bot_source="webapp",
+        )
+    except Exception as e:
+        logger.error("webapp_chat_error", error=str(e))
+        return web.json_response({"error": "AI service unavailable"}, status=503)
+
+    return _json_response({"reply": reply})
+
+
 async def api_task_complete(request: web.Request) -> web.Response:
     """POST /api/webapp/tasks/{task_id}/complete — отметить задачу выполненной."""
     user_id = _get_user_id(request)
@@ -271,6 +331,7 @@ async def api_task_create(request: web.Request) -> web.Response:
         due_date=body.get("due_date"),
         due_time=body.get("due_time"),
         priority=body.get("priority", "normal"),
+        project_id=body.get("project_id"),
     )
 
     return _json_response({"ok": True, "task": dict(task)})
@@ -288,6 +349,8 @@ def setup_webapp_routes(app: web.Application) -> None:
     app.router.add_get("/api/webapp/health", api_health_today)
     app.router.add_get("/api/webapp/finances", api_finances)
     app.router.add_get("/api/webapp/projects", api_projects)
+    app.router.add_get("/api/webapp/projects/{project_id}/tasks", api_project_tasks)
+    app.router.add_post("/api/webapp/chat", api_chat)
 
     # Static files (HTML/CSS/JS) с запретом кеширования
     static_dir = os.path.join(os.path.dirname(__file__), "static")

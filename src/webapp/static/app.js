@@ -54,6 +54,7 @@ async function loadTab(name) {
             case "health": await loadHealth(); break;
             case "goals": await loadGoals(); break;
             case "finances": await loadFinances(); break;
+            case "chat": initChat(); break;
         }
         cache[name] = true;
     } catch (e) {
@@ -233,7 +234,7 @@ async function loadProjects() {
         const typeLabel = typeLabels[p.type] || "📁 Проект";
 
         return `
-            <div class="list-item project-card">
+            <div class="list-item project-card clickable" onclick="openProjectDetail(${p.project_id}, '${escapeAttr(p.name)}')">
                 <div class="project-main">
                     <div class="project-name">${escapeHtml(p.name)}</div>
                     <div class="project-type">${typeLabel}</div>
@@ -241,6 +242,7 @@ async function loadProjects() {
                 <div class="project-stats">
                     ${taskInfo}
                     ${finInfo}
+                    <span class="project-arrow">›</span>
                 </div>
             </div>
         `;
@@ -425,12 +427,139 @@ async function loadFinances() {
     }).join("");
 }
 
+// === Project Detail ===
+
+let currentProjectId = null;
+
+async function openProjectDetail(projectId, projectName) {
+    currentProjectId = projectId;
+    document.getElementById("project-detail-name").textContent = projectName;
+    document.getElementById("project-detail").classList.remove("hidden");
+    document.getElementById("project-task-text").value = "";
+    document.getElementById("project-task-date").value = new Date().toISOString().split("T")[0];
+    if (tg) tg.HapticFeedback?.impactOccurred("light");
+    await loadProjectTasks(projectId);
+}
+
+function closeProjectDetail() {
+    document.getElementById("project-detail").classList.add("hidden");
+    currentProjectId = null;
+}
+
+async function loadProjectTasks(projectId) {
+    const list = document.getElementById("project-tasks-list");
+    list.innerHTML = '<div class="loading-inline">Загрузка...</div>';
+    try {
+        const data = await api(`/api/webapp/projects/${projectId}/tasks`);
+        if (!data.tasks || !data.tasks.length) {
+            list.innerHTML = '<div class="empty-state">Нет задач в проекте</div>';
+            return;
+        }
+        list.innerHTML = data.tasks.map(t => renderTaskItem(t, false)).join("");
+    } catch (e) {
+        list.innerHTML = `<div class="error-state">⚠️ ${e.message}</div>`;
+    }
+}
+
+document.getElementById("btn-project-add-task")?.addEventListener("click", async () => {
+    const text = document.getElementById("project-task-text").value.trim();
+    if (!text || !currentProjectId) return;
+    const date = document.getElementById("project-task-date").value;
+    const priority = document.getElementById("project-task-priority").value;
+    const btn = document.getElementById("btn-project-add-task");
+    try {
+        btn.disabled = true;
+        await api("/api/webapp/tasks", {
+            method: "POST",
+            body: JSON.stringify({ text, due_date: date || null, priority, project_id: currentProjectId }),
+        });
+        document.getElementById("project-task-text").value = "";
+        await loadProjectTasks(currentProjectId);
+        cache.tasks = false;
+        cache.projects = false;
+        if (tg) tg.HapticFeedback?.notificationOccurred("success");
+    } catch (e) {
+        console.error("Add project task error:", e);
+        if (tg) tg.HapticFeedback?.notificationOccurred("error");
+    } finally { btn.disabled = false; }
+});
+
+// === Chat ===
+
+let chatInitialized = false;
+
+function initChat() {
+    if (chatInitialized) return;
+    chatInitialized = true;
+
+    const input = document.getElementById("chat-input");
+    const btn = document.getElementById("btn-send-chat");
+
+    btn.addEventListener("click", sendChatMessage);
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendChatMessage();
+        }
+    });
+}
+
+async function sendChatMessage() {
+    const input = document.getElementById("chat-input");
+    const message = input.value.trim();
+    if (!message) return;
+
+    const messagesDiv = document.getElementById("chat-messages");
+
+    // Remove welcome message on first send
+    const welcome = messagesDiv.querySelector(".chat-welcome");
+    if (welcome) welcome.remove();
+
+    // Add user bubble
+    appendChatBubble(message, "user");
+    input.value = "";
+    input.focus();
+
+    // Add typing indicator
+    const typing = document.createElement("div");
+    typing.className = "chat-bubble assistant typing";
+    typing.innerHTML = '<span class="typing-dots"><span>.</span><span>.</span><span>.</span></span>';
+    messagesDiv.appendChild(typing);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+    try {
+        const data = await api("/api/webapp/chat", {
+            method: "POST",
+            body: JSON.stringify({ message }),
+        });
+        typing.remove();
+        appendChatBubble(data.reply, "assistant");
+        if (tg) tg.HapticFeedback?.impactOccurred("light");
+    } catch (e) {
+        typing.remove();
+        appendChatBubble("⚠️ Ошибка: " + e.message, "assistant error");
+    }
+}
+
+function appendChatBubble(text, role) {
+    const messagesDiv = document.getElementById("chat-messages");
+    const bubble = document.createElement("div");
+    bubble.className = `chat-bubble ${role}`;
+    bubble.textContent = text;
+    messagesDiv.appendChild(bubble);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
 // === Utils ===
 
 function escapeHtml(text) {
     const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
+}
+
+function escapeAttr(text) {
+    return text.replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
 
 function formatMoney(n) {
