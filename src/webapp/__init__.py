@@ -70,20 +70,26 @@ def _get_user_id(request: web.Request) -> int | None:
 
     init_data = request.headers.get("X-Telegram-Init-Data", "")
     if not init_data:
+        logger.warning("webapp.auth_no_init_data")
         return None
 
     # Определяем токен бота
     token = settings.bot_token_unified or settings.bot_token_master
     if not token:
+        logger.warning("webapp.auth_no_token")
         return None
 
     data = validate_init_data(init_data, token)
     if not data:
+        logger.warning("webapp.auth_validation_failed", init_data_len=len(init_data), token_prefix=token[:10])
         return None
 
     user = data.get("user")
     if isinstance(user, dict):
-        return user.get("id")
+        uid = user.get("id")
+        logger.info("webapp.auth_ok", user_id=uid)
+        return uid
+    logger.warning("webapp.auth_no_user_in_data")
     return None
 
 
