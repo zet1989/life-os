@@ -179,12 +179,15 @@ async def _run_unified_webhook(app, instances, schedulers) -> None:
         schedulers.append(sched)
 
     webhook_url = f"{settings.webhook_host}{path}"
-    await bot.set_webhook(
-        url=webhook_url,
-        secret_token=settings.webhook_secret or None,
-        drop_pending_updates=True,
-    )
-    logger.info("unified_webhook_set", url=webhook_url, sections=len(cfg["routers"]) - 1)
+    try:
+        await bot.set_webhook(
+            url=webhook_url,
+            secret_token=settings.webhook_secret or None,
+            drop_pending_updates=True,
+        )
+        logger.info("unified_webhook_set", url=webhook_url, sections=len(cfg["routers"]) - 1)
+    except Exception as e:
+        logger.error("unified_webhook_set_failed", url=webhook_url, error=str(e))
 
 
 # ─────────────────────────────────────────────────────────
