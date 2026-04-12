@@ -31,7 +31,7 @@ async def get_model_config(task_type: str) -> dict:
 
     config = await _db_get_model_config(task_type)
     if config is None:
-        # Стратегические задачи → Claude Sonnet 4
+        # Стратегические задачи → DeepSeek V3.2 (GPT-5 class, 10x дешевле Sonnet 4)
         if task_type in (
             "mentor_idea", "mentor_discussion", "mentor_strategy", "mentor_report",
             "master_audit", "master_goal", "master_talk", "quarterly_audit",
@@ -39,7 +39,7 @@ async def get_model_config(task_type: str) -> dict:
             "business_strategy",
         ):
             config = {
-                "model": "anthropic/claude-sonnet-4",
+                "model": "deepseek/deepseek-v3.2",
                 "max_tokens": 2000,
                 "temperature": 0.5,
                 "fallback_model": "openai/gpt-4o",
