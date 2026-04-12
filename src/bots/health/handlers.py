@@ -1,5 +1,6 @@
 """Хэндлеры бота Health — питание, тренировки, настройки."""
 
+import asyncio
 import json
 import re
 from datetime import datetime
@@ -884,11 +885,15 @@ async def _process_water_text(message: Message, user_id: int, text: str) -> None
 
 async def _process_food_text(message: Message, user_id: int, text: str) -> None:
     """Обработка текстового описания еды — STATELESS."""
-    meals_ctx = await _today_meals_context(user_id)
-    settings = await _get_user_settings(user_id)
-    meds_ctx = await _medications_context(user_id)
-    watch_ctx = await _watch_context(user_id)
-    prompt_template = WIFE_NUTRITIONIST_SYSTEM if await _is_wife(user_id) else NUTRITIONIST_SYSTEM
+    # Параллельные DB-запросы для ускорения
+    meals_ctx, settings, meds_ctx, watch_ctx, is_wife = await asyncio.gather(
+        _today_meals_context(user_id),
+        _get_user_settings(user_id),
+        _medications_context(user_id),
+        _watch_context(user_id),
+        _is_wife(user_id),
+    )
+    prompt_template = WIFE_NUTRITIONIST_SYSTEM if is_wife else NUTRITIONIST_SYSTEM
     system = prompt_template.format(
         current_time=_now_str(),
         today_meals_context=meals_ctx,
@@ -898,9 +903,9 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
         system += f"\n\n{meds_ctx}"
     if watch_ctx:
         system += f"\n\n{watch_ctx}"
-    # История за сегодня — для связного диалога и учёта контекста
+    # Короткая история — для связного диалога без раздувания токенов
     messages = [{"role": "system", "content": system}]
-    history = await get_today_messages(user_id, BOT_SOURCE, limit=10)
+    history = await get_today_messages(user_id, BOT_SOURCE, limit=4)
     messages.extend(history)
     messages.append({"role": "user", "content": text})
     await save_message(user_id, BOT_SOURCE, "user", text)
