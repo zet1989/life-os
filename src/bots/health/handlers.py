@@ -14,8 +14,12 @@ from src.ai.router import chat
 from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
+from src.db.queries import (
+    create_event, get_active_goals, get_today_meals, get_today_messages,
+    get_today_water, get_today_workouts, get_user, get_weight_history,
+    save_message, update_user_settings,
+)
 from src.utils.telegram import safe_answer, safe_answer_voice, safe_edit
-from src.db.queries import create_event, get_active_goals, get_today_meals, get_today_water, get_today_workouts, get_user, get_weight_history, update_user_settings
 from src.bots.health.prompts import (
     DOCTOR_PHOTO_PROMPT,
     DOCTOR_SYSTEM,
@@ -874,8 +878,12 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
         system += f"\n\n{meds_ctx}"
     if watch_ctx:
         system += f"\n\n{watch_ctx}"
-    # STATELESS: только system prompt + текущее сообщение, НОЛЬ истории
-    messages = [{"role": "system", "content": system}, {"role": "user", "content": text}]
+    # История за сегодня — для связного диалога и учёта контекста
+    messages = [{"role": "system", "content": system}]
+    history = await get_today_messages(user_id, BOT_SOURCE, limit=10)
+    messages.extend(history)
+    messages.append({"role": "user", "content": text})
+    await save_message(user_id, BOT_SOURCE, "user", text)
     result = await chat(messages=messages, task_type="meal_photo", user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)
@@ -893,6 +901,7 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
 
     display_text = _format_meal_response(result, json_data, user_id)
     await safe_answer(message, display_text, reply_markup=main_keyboard())
+    await save_assistant_reply(user_id, BOT_SOURCE, result)
 
 
 async def _process_workout(message: Message, user_id: int, text: str) -> None:
