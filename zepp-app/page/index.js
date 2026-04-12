@@ -49,7 +49,7 @@ function formatTime(tsStr) {
 
 Page(
   BasePage({
-    state: { statusWidget: null, hintWidget: null },
+    state: { statusWidget: null, hintWidget: null, autoSyncTimer: null },
 
     build() {
       const lastStatus = localStorage.getItem('last_sync_status') || 'none';
@@ -109,6 +109,22 @@ Page(
         text: '', text_size: px(20), color: COLOR_MUTED,
         align_h: align.CENTER_H, text_style: text_style.WRAP,
       });
+
+      // Авто-синхронизация каждые INTERVAL_MINUTES
+      const intervalMs = (INTERVAL_MINUTES || 15) * 60 * 1000;
+      this.state.autoSyncTimer = setInterval(() => {
+        this.syncNow();
+      }, intervalMs);
+
+      // Первая автосинхронизация через 10 секунд после запуска
+      setTimeout(() => { this.syncNow(); }, 10000);
+    },
+
+    onDestroy() {
+      if (this.state.autoSyncTimer) {
+        clearInterval(this.state.autoSyncTimer);
+        this.state.autoSyncTimer = null;
+      }
     },
 
     syncNow() {

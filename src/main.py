@@ -169,7 +169,10 @@ async def _run_unified_polling() -> None:
 
         try:
             payload = await request.json()
-        except Exception:
+        except Exception as exc:
+            logger.error("watch_push_json_error", error=str(exc), content_type=request.content_type)
+            body_raw = await request.text()
+            logger.error("watch_push_raw_body", body=body_raw[:500])
             return web.json_response({"error": "invalid json"}, status=400)
 
         from src.integrations.amazfit import process_watch_push
@@ -466,7 +469,10 @@ async def _main_webhook() -> None:
 
         try:
             payload = await request.json()
-        except Exception:
+        except Exception as exc:
+            logger.error("watch_push_json_error", error=str(exc), content_type=request.content_type)
+            body_raw = await request.text()
+            logger.error("watch_push_raw_body", body=body_raw[:500])
             return web.json_response({"error": "invalid json"}, status=400)
 
         from src.integrations.amazfit import process_watch_push
