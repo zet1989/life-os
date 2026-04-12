@@ -813,7 +813,7 @@ async def _merge_profile(existing: str, new_text: str, user_id: int) -> str:
             {"role": "system", "content": PROFILE_MERGE_SYSTEM},
             {"role": "user", "content": user_content},
         ],
-        task_type="general_chat",
+        task_type="profile_merge",
         user_id=user_id,
         bot_source=BOT_SOURCE,
     )

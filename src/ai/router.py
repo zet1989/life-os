@@ -52,6 +52,14 @@ async def get_model_config(task_type: str) -> dict:
                 "temperature": 0.3,
                 "fallback_model": "openai/gpt-4o-mini",
             }
+        # Мерж профиля — нужен достаточный max_tokens чтобы не обрезать
+        elif task_type == "profile_merge":
+            config = {
+                "model": "openai/gpt-4o-mini",
+                "max_tokens": 2000,
+                "temperature": 0.3,
+                "fallback_model": None,
+            }
         else:
             config = {
                 "model": "openai/gpt-4o-mini",
