@@ -836,6 +836,17 @@ async def _process_profile(message: Message, user_id: int, text: str) -> None:
         await _process_food_text(message, user_id, text)
         return
 
+    # Защита от потери данных: если merged короче existing — LLM обрезал
+    if existing and len(merged) < len(existing) * 0.8:
+        logger.warning(
+            "profile_merge_data_loss_detected",
+            user_id=user_id,
+            existing_len=len(existing),
+            merged_len=len(merged),
+        )
+        # Fallback: дописываем новые сведения к существующему профилю
+        merged = f"{existing}\n{text}"
+
     await update_user_settings(user_id, merged)
     set_user_mode(user_id, Mode.FOOD)
 

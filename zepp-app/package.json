@@ -5,11 +5,6 @@
   "scripts": {
     "dev":     "zeus dev",
     "build":   "zeus build",
-    "preview": "zeus preview",
-    "install": "zeus install"
-  },
-  "devDependencies": {
-    "@zeppos/eslint-config-zepp-os": "latest",
-    "@zeppos/zml": "latest"
+    "preview": "zeus preview"
   }
 }

@@ -1,0 +1,73 @@
+{
+  "configVersion": "v3",
+  "app": {
+    "appId": 1111564,
+    "appName": "Life OS Sync",
+    "appType": "app",
+    "version": {
+      "code": 1,
+      "name": "1.0.0"
+    },
+
+    "icon": "icon.png",
+    "vender": "life-os",
+    "description": "Синхронизация данных о здоровье с Life OS"
+  },
+  "permissions": [
+    "data:user.hd.heart_rate",
+    "data:user.hd.spo2",
+    "data:user.hd.stress",
+    "data:user.hd.sleep",
+    "data:user.hd.step_count",
+    "data:user.hd.calories",
+    "data:user.hd.distance",
+    "data:user.hd.skin_temperature"
+  ],
+  "runtime": {
+    "apiVersion": {
+      "compatible": "4.0.0",
+      "target": "4.2.0",
+      "minVersion": "4.0.0"
+    }
+  },
+  "targets": {
+    "Amazfit Balance 2": {
+      "module": {
+        "page": {
+          "pages": [
+            "page/index"
+          ]
+        },
+        "app-service": {
+          "services": [
+            "app-service/index"
+          ]
+        }
+      },
+      "platforms": [
+        {
+          "name": "Amazfit Balance 2",
+          "deviceSource": 9568512
+        },
+        {
+          "name": "Amazfit Balance 2",
+          "deviceSource": 9568513
+        },
+        {
+          "name": "Amazfit Balance 2",
+          "deviceSource": 9568515
+        }
+      ],
+      "designWidth": 480
+    }
+  },
+  "i18n": {
+    "en-US": {
+      "appName": "Life OS Sync"
+    },
+    "ru-RU": {
+      "appName": "Life OS Синхронизация"
+    }
+  },
+  "defaultLanguage": "en-US"
+}
