@@ -88,6 +88,19 @@ async def _watch_context(user_id: int) -> str:
     return "⌚ ДАННЫЕ ЧАСОВ СЕГОДНЯ:\n" + "\n".join(f"  {p}" for p in parts)
 
 
+async def _medications_context(user_id: int) -> str:
+    """Собрать контекст лекарств и добавок для AI-промптов."""
+    goals = await get_active_goals(user_id)
+    medications = [g for g in goals if g.get("type") == "medication"]
+    if not medications:
+        return ""
+    lines = []
+    for m in medications:
+        times = m.get("description", "")
+        lines.append(f"  • {m['title']}" + (f" — {times}" if times else ""))
+    return "💊 ЛЕКАРСТВА И ДОБАВКИ:\n" + "\n".join(lines)
+
+
 async def _today_meals_context(user_id: int) -> str:
     """Собрать контекст сегодняшних приёмов пищи из БД."""
     meals = await get_today_meals(user_id, bot_source="health")
@@ -816,12 +829,18 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
     """Обработка текстового описания еды — STATELESS."""
     meals_ctx = await _today_meals_context(user_id)
     settings = await _get_user_settings(user_id)
+    meds_ctx = await _medications_context(user_id)
+    watch_ctx = await _watch_context(user_id)
     prompt_template = WIFE_NUTRITIONIST_SYSTEM if await _is_wife(user_id) else NUTRITIONIST_SYSTEM
     system = prompt_template.format(
         current_time=_now_str(),
         today_meals_context=meals_ctx,
         user_settings=settings,
     )
+    if meds_ctx:
+        system += f"\n\n{meds_ctx}"
+    if watch_ctx:
+        system += f"\n\n{watch_ctx}"
     # STATELESS: только system prompt + текущее сообщение, НОЛЬ истории
     messages = [{"role": "system", "content": system}, {"role": "user", "content": text}]
     result = await chat(messages=messages, task_type="meal_photo", user_id=user_id, bot_source=BOT_SOURCE)
@@ -966,12 +985,15 @@ async def _process_doctor(message: Message, user_id: int, text: str) -> None:
     profile = await _get_user_settings(user_id)
     work_ctx = await get_work_summary_text(user_id, days=7)
     watch_ctx = await _watch_context(user_id)
+    meds_ctx = await _medications_context(user_id)
     system = DOCTOR_SYSTEM.format(
         current_time=_now_str(),
         today_meals_context=meals_ctx,
         today_workouts_context=workouts_ctx,
         user_profile=profile,
     )
+    if meds_ctx:
+        system += f"\n\n{meds_ctx}"
     if work_ctx:
         system += f"\n\n{work_ctx}"
     if watch_ctx:
