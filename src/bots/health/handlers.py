@@ -693,6 +693,39 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
         await _process_food_text(message, user_id, text)
 
 
+# === 💊 Лекарства ===
+
+@router.message(F.text == "💊 Лекарства")
+async def mode_medications(message: Message, db_user: dict) -> None:
+    """Показать список лекарств или предложить добавить."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    goals = await get_active_goals(user_id)
+    medications = [g for g in goals if g.get("type") == "medication"]
+
+    if not medications:
+        await message.answer(
+            "💊 <b>Лекарства и добавки</b>\n\n"
+            "Список пуст. Добавь свои лекарства и БАДы:\n\n"
+            "<code>/med_add Магний 21:00</code>\n"
+            "<code>/med_add Витамин D 09:00</code>\n"
+            "<code>/med_add Омега-3 09:00,21:00</code>\n\n"
+            "AI-нутрициолог и доктор будут учитывать их при рекомендациях.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    text = "💊 <b>Мои лекарства и добавки:</b>\n\n"
+    for m in medications:
+        times = m.get("description", "")
+        text += f"• <b>{m['title']}</b>" + (f" — ⏰ {times}" if times else "") + f" (ID: {m['id']})\n"
+    text += (
+        "\n➕ Добавить: <code>/med_add Название Время</code>\n"
+        "🗑 Удалить: <code>/med_del ID</code>\n"
+        "📜 История приёмов: /med_history"
+    )
+    await message.answer(text, reply_markup=main_keyboard())
+
+
 # === ⌚ Часы (Amazfit Balance 2 — push API) ===
 
 @router.message(F.text == "⌚ Часы")
