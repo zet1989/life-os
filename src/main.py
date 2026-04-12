@@ -60,9 +60,10 @@ def _collect_unified() -> dict:
     scheduler_factories = []
 
     # Health
-    from src.bots.health.handlers import router as health_router
+    from src.bots.health.handlers import router as health_router, watch_router
     from src.bots.health.scheduler import setup_scheduler as health_scheduler
     health_router.message.filter(SectionFilter("health"))
+    routers.append(watch_router)   # watch_router БЕЗ SectionFilter — /watch_connect из любой секции
     routers.append(health_router)
     scheduler_factories.append(health_scheduler)
 

@@ -508,7 +508,10 @@ async def cb_task_done(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
     task = await get_task_by_id(task_id, user_id)
-    await complete_task(task_id, user_id)
+    ok = await complete_task(task_id, user_id)
+    if not ok:
+        await callback.answer("⚠️ Не удалось отметить задачу")
+        return
     if task:
         due = task["due_date"].isoformat() if task.get("due_date") else None
         await obsidian.complete_task_in_md(task["task_text"], due_date=due)

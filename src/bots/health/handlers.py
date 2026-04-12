@@ -30,6 +30,7 @@ from src.integrations.obsidian.writer import obsidian
 
 logger = structlog.get_logger()
 router = Router()
+watch_router = Router()  # Отдельный роутер для /watch_connect, /watch_disconnect — без SectionFilter
 
 BOT_SOURCE = "health"
 MSK = ZoneInfo("Europe/Moscow")
@@ -1130,7 +1131,7 @@ async def mode_watch(message: Message, db_user: dict) -> None:
     await message.answer(text, reply_markup=main_keyboard())
 
 
-@router.message(Command("watch_connect"))
+@watch_router.message(Command("watch_connect"))
 async def cmd_watch_connect(message: Message, db_user: dict) -> None:
     """Сгенерировать API-ключ для push-интеграции с Amazfit Balance 2."""
     from src.integrations.amazfit import generate_watch_api_key
@@ -1170,7 +1171,7 @@ async def cmd_watch_connect(message: Message, db_user: dict) -> None:
     )
 
 
-@router.message(Command("watch_disconnect"))
+@watch_router.message(Command("watch_disconnect"))
 async def cmd_watch_disconnect(message: Message, db_user: dict) -> None:
     """Отвязать часы."""
     from src.db.queries import delete_watch_token

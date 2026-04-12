@@ -255,10 +255,10 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # Вечерний обзор — 18:00 каждый день
+    # Вечерний обзор — 21:00 каждый день
     scheduler.add_job(
         send_evening_review,
-        trigger=CronTrigger(hour=18, minute=0, timezone=MSK),
+        trigger=CronTrigger(hour=21, minute=0, timezone=MSK),
         args=[bot],
         id="evening_review",
         replace_existing=True,
@@ -479,6 +479,14 @@ async def _send_evening_to_user(bot: Bot, user_id: int) -> None:
         total = len(tasks)
         unclosed = [t for t in tasks if not t["is_done"]]
 
+        logger.info(
+            "evening_review_data",
+            user_id=user_id,
+            total=total,
+            done=done_count,
+            tasks=[{"id": t["id"], "text": t["task_text"][:30], "is_done": t["is_done"]} for t in tasks],
+        )
+
         text = EVENING_REVIEW_HEADER
 
         if total == 0:
@@ -497,7 +505,11 @@ async def _send_evening_to_user(bot: Bot, user_id: int) -> None:
             for t in unclosed[:5]:
                 buttons.append([
                     InlineKeyboardButton(
-                        text=f"📅 {t['task_text'][:25]}→завтра",
+                        text="✅",
+                        callback_data=f"task_done:{t['id']}",
+                    ),
+                    InlineKeyboardButton(
+                        text=f"📅 {t['task_text'][:20]}→завтра",
                         callback_data=f"task_reschedule:{t['id']}:{tomorrow}",
                     ),
                     InlineKeyboardButton(

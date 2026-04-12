@@ -1,6 +1,6 @@
 # Life OS — Полная проектная документация
 
-> **Последнее обновление:** 10 апреля 2026
+> **Последнее обновление:** 12 апреля 2026
 > **Автор:** Алексей (zet1989)
 > **Файл в .gitignore для сохранения приватности**
 
@@ -418,8 +418,19 @@ API_MONTHLY_LIMIT_USD=20.0
 - **RAG project_id filtering:** `_index_note_for_rag()` (watcher.py) теперь для файлов из `05-Projects/{name}/` автоматически lookup-ит project по имени через `get_project_by_name()` и ставит `project_id` на event. Новые events с project_id → `match_events()` может фильтровать по проекту
 - **`src/db/queries.py`:** Добавлен `get_project_by_name()` — поиск активного проекта по имени (case-insensitive, для маппинга папок Obsidian → project_id)
 
+### 12 апреля 2026 — Zepp OS мини-приложение + фиксы итогов дня
+
+- **`zepp-app/`:** Создано Zepp OS мини-приложение для Amazfit Balance 2 — автоматическая отправка данных здоровья на сервер Life OS
+  - `zepp-app/app-service/index.js` — фоновый AppService: сбор метрик (шаги, пульс, SpO2, стресс, сон, калории, дистанция, температура кожи) → HTTP POST `/api/watch/push` каждые N минут через `setAlarm` (battery-efficient паттерн)
+  - `zepp-app/page/index.js` — UI-экран статуса на часах: последняя синхр., метрики, кнопка «Синхр. сейчас»
+  - `zepp-app/config.js` — конфиг (API_KEY, SERVER_URL, INTERVAL_MINUTES) — заполнить перед сборкой
+  - `zepp-app/app.json` — манифест с разрешениями на все датчики здоровья (заполнить AppID + deviceSource из developer.zepp.com)
+  - `zepp-app/README.md` — пошаговая инструкция установки (8 шагов: Zepp-аккаунт → developer.zepp.com → /watch_connect → Zeus CLI → config.js → сборка → установка → проверка)
+- **Поток данных часов:** Watch AppService → HTTP POST Bearer → `/api/watch/push` → `process_watch_push()` → `events` → Health-бот видит данные в контексте AI
+- **`src/bots/master/handlers.py`:** Исправлен `cb_task_done` — проверяет результат `complete_task()` (был молчаливый игнор: задача считалась выполненной, но `is_done` не менялось в БД)
+- **`src/bots/master/scheduler.py`:** Добавлено structured-логирование в `_send_evening_to_user()` — список задач с `is_done` для диагностики; добавлена кнопка ✅ рядом с каждой невыполненной задачей в итогах дня; вечерний обзор сдвинут с 18:00 → 21:00 MSK
+
 ### 11 апреля 2026 — Amazfit Balance 2 (замена Huawei)
-- **Интеграция:** Полная замена HUAWEI Health Kit (OAuth2 + polling) на Amazfit Balance 2 (push-модель через Zepp OS)
 - **Архитектура:** Вместо pull каждые 30 мин — часы сами POST-ят данные на `/api/watch/push` с Bearer API-ключом
 - **`src/integrations/amazfit.py`:** Новый модуль — `process_watch_push()`, `generate_watch_api_key()`, `format_summary()`
 - **`src/integrations/huawei_health.py`:** Удалён (заменён amazfit.py)
