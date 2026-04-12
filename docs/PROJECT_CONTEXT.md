@@ -219,7 +219,7 @@ git push origin main  # → триггерит GitHub Actions
 |-----------|--------|-----------|------------|
 | meal_photo | gpt-4o-mini | 500 | Анализ еды: КБЖУ + health score + советы + оценка дня |
 | nutrition_consult | deepseek-v3.2 | 1500 | Вопросы нутрициологу (советы, добавки, анализ рациона) |
-| doctor_consult | gpt-4o | 2000 | Медицинские консультации, анализы (критичная) |
+| doctor_consult | deepseek-v3.2 | 2000 | Медицинские консультации, анализы (fallback: gpt-4o) |
 | workout_parse | gpt-4o-mini | 500 | Парсинг тренировки |
 | business_strategy | deepseek-v3.2 | 2000 | Бизнес-стратегия |
 | diary_reflection | deepseek-v3.2 | 2000 | Психология - дневник |
@@ -385,7 +385,7 @@ API_MONTHLY_LIMIT_USD=20.0
 |------|-----------|
 | `src/main.py` | Точка входа, сбор ботов, polling/webhook |
 | `src/config.py` | Pydantic Settings, все env vars |
-| `src/ai/router.py` | OpenRouter клиент, model routing, tenacity retry, critical tasks (business_strategy, doctor_consult) |
+| `src/ai/router.py` | OpenRouter клиент, model routing, tenacity retry, fallback для doctor_consult → gpt-4o |
 | `src/ai/whisper.py` | Транскрипция аудио |
 | `src/ai/vision.py` | Анализ фото (gpt-4o) |
 | `src/ai/embeddings.py` | text-embedding-3-small |
@@ -402,6 +402,10 @@ API_MONTHLY_LIMIT_USD=20.0
 ---
 
 ## 12. Changelog (последние изменения)
+
+### 12 апреля 2026 — doctor_consult → DeepSeek V3.2
+- **`src/ai/router.py`:** doctor_consult переведён с gpt-4o на deepseek/deepseek-v3.2 (fallback остаётся gpt-4o). Все задачи теперь на DeepSeek кроме meal_photo/daily_summary/general (gpt-4o-mini)
+- **БД `model_routing`:** UPDATE doctor_consult → deepseek/deepseek-v3.2
 
 ### 12 апреля 2026 — Нутрициолог v2: недельный анализ + DeepSeek V3.2
 - **Проблема:** Нутрициолог видел только сегодняшнее питание, не мог анализировать рацион комплексно, отписывался общими фразами на вопросы о добавках
