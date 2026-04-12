@@ -19,9 +19,13 @@
     "data:user.hd.stress",
     "data:user.hd.sleep",
     "data:user.hd.step_count",
+    "data:user.hd.step",
     "data:user.hd.calories",
     "data:user.hd.distance",
-    "data:user.hd.skin_temperature"
+    "data:user.hd.skin_temperature",
+    "device:os.local_storage",
+    "device:os.alarm",
+    "device:os.network"
   ],
   "runtime": {
     "apiVersion": {
@@ -37,6 +41,9 @@
           "pages": [
             "page/index"
           ]
+        },
+        "app-side": {
+          "path": "app-side/index"
         },
         "app-service": {
           "services": [

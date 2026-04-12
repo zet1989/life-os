@@ -680,6 +680,90 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
         await _process_food_text(message, user_id, text)
 
 
+# === ⌚ Часы (Amazfit Balance 2 — push API) ===
+
+@router.message(F.text == "⌚ Часы")
+async def mode_watch(message: Message, db_user: dict) -> None:
+    """Показать текущие данные с часов или предложить подключить."""
+    from src.db.queries import get_watch_token, get_today_watch_metrics
+
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.WATCH)
+
+    token = await get_watch_token(user_id)
+    if not token:
+        await message.answer(
+            "⌚ <b>Смарт-часы не подключены</b>\n\n"
+            "Подключи Amazfit Balance 2 для автоматического трекинга:\n"
+            "• 🫀 Пульс и SpO2\n"
+            "• 🚶 Шаги и калории\n"
+            "• 😴 Анализ сна\n"
+            "• 😰 Уровень стресса\n"
+            "• 🌡 Температура кожи\n\n"
+            "Для подключения: /watch_connect",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    # Показать последние данные
+    metrics = await get_today_watch_metrics(user_id)
+    if not metrics:
+        last_push = token.get("last_push_at")
+        last_str = last_push.strftime("%d.%m %H:%M") if last_push and hasattr(last_push, "strftime") else "никогда"
+        await message.answer(
+            f"⌚ Часы подключены (<b>{token.get('device_name', 'Amazfit Balance 2')}</b>)\n"
+            f"Последний push: {last_str}\n"
+            f"Интервал: каждые {token.get('push_interval_min', 15)} мин\n\n"
+            "Сегодня данных пока нет. Часы отправят данные автоматически.\n\n"
+            "/watch_disconnect — отвязать часы",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    # Собрать сводку из последних метрик
+    last = metrics[0].get("json_data") or {}
+    text = "⌚ <b>Данные с часов сегодня</b>\n\n"
+
+    if "steps" in last:
+        text += f"🚶 Шаги: <b>{last['steps']}</b>\n"
+    if "distance_km" in last:
+        text += f"📏 Дистанция: <b>{last['distance_km']} км</b>\n"
+    if "calories_burned" in last:
+        text += f"🔥 Сожжено: <b>{last['calories_burned']} ккал</b>\n"
+
+    hr = last.get("heart_rate")
+    if hr:
+        text += f"🫀 Пульс: <b>{hr.get('avg', '?')}</b> (мин {hr.get('min', '?')}, макс {hr.get('max', '?')})\n"
+
+    sp = last.get("spo2")
+    if sp:
+        text += f"🩸 SpO2: <b>{sp.get('avg', '?')}%</b>\n"
+
+    st = last.get("stress")
+    if st:
+        level = st.get("avg", 0)
+        emoji = "😌" if level < 30 else "😐" if level < 60 else "😰"
+        text += f"{emoji} Стресс: <b>{level}/100</b>\n"
+
+    if "skin_temperature" in last:
+        text += f"🌡 Температура: <b>{last['skin_temperature']}°C</b>\n"
+
+    sl = last.get("sleep")
+    if sl:
+        text += (
+            f"\n😴 <b>Сон:</b> {sl.get('total_hours', '?')}ч\n"
+            f"  Глубокий: {sl.get('deep_min', 0)} мин\n"
+            f"  REM: {sl.get('rem_min', 0)} мин\n"
+            f"  Качество: {sl.get('quality_pct', '?')}%\n"
+        )
+
+    text += (
+        f"\n⏰ Обновлено: {metrics[0]['timestamp'].strftime('%H:%M') if hasattr(metrics[0]['timestamp'], 'strftime') else '?'}\n"
+        f"\n/watch_disconnect — отвязать часы"
+    )
+    await message.answer(text, reply_markup=main_keyboard())
+
+
 # === Текстовое сообщение ===
 
 @router.message(F.text)
@@ -1065,90 +1149,6 @@ def _extract_json(text: str) -> dict | None:
         return json.loads(text[start:end])
     except (ValueError, json.JSONDecodeError):
         return None
-
-
-# === ⌚ Часы (Amazfit Balance 2 — push API) ===
-
-@router.message(F.text == "⌚ Часы")
-async def mode_watch(message: Message, db_user: dict) -> None:
-    """Показать текущие данные с часов или предложить подключить."""
-    from src.db.queries import get_watch_token, get_today_watch_metrics
-
-    user_id = message.from_user.id  # type: ignore[union-attr]
-    set_user_mode(user_id, Mode.WATCH)
-
-    token = await get_watch_token(user_id)
-    if not token:
-        await message.answer(
-            "⌚ <b>Смарт-часы не подключены</b>\n\n"
-            "Подключи Amazfit Balance 2 для автоматического трекинга:\n"
-            "• 🫀 Пульс и SpO2\n"
-            "• 🚶 Шаги и калории\n"
-            "• 😴 Анализ сна\n"
-            "• 😰 Уровень стресса\n"
-            "• 🌡 Температура кожи\n\n"
-            "Для подключения: /watch_connect",
-            reply_markup=main_keyboard(),
-        )
-        return
-
-    # Показать последние данные
-    metrics = await get_today_watch_metrics(user_id)
-    if not metrics:
-        last_push = token.get("last_push_at")
-        last_str = last_push.strftime("%d.%m %H:%M") if last_push and hasattr(last_push, "strftime") else "никогда"
-        await message.answer(
-            f"⌚ Часы подключены (<b>{token.get('device_name', 'Amazfit Balance 2')}</b>)\n"
-            f"Последний push: {last_str}\n"
-            f"Интервал: каждые {token.get('push_interval_min', 15)} мин\n\n"
-            "Сегодня данных пока нет. Часы отправят данные автоматически.\n\n"
-            "/watch_disconnect — отвязать часы",
-            reply_markup=main_keyboard(),
-        )
-        return
-
-    # Собрать сводку из последних метрик
-    last = metrics[0].get("json_data") or {}
-    text = "⌚ <b>Данные с часов сегодня</b>\n\n"
-
-    if "steps" in last:
-        text += f"🚶 Шаги: <b>{last['steps']}</b>\n"
-    if "distance_km" in last:
-        text += f"📏 Дистанция: <b>{last['distance_km']} км</b>\n"
-    if "calories_burned" in last:
-        text += f"🔥 Сожжено: <b>{last['calories_burned']} ккал</b>\n"
-
-    hr = last.get("heart_rate")
-    if hr:
-        text += f"🫀 Пульс: <b>{hr.get('avg', '?')}</b> (мин {hr.get('min', '?')}, макс {hr.get('max', '?')})\n"
-
-    sp = last.get("spo2")
-    if sp:
-        text += f"🩸 SpO2: <b>{sp.get('avg', '?')}%</b>\n"
-
-    st = last.get("stress")
-    if st:
-        level = st.get("avg", 0)
-        emoji = "😌" if level < 30 else "😐" if level < 60 else "😰"
-        text += f"{emoji} Стресс: <b>{level}/100</b>\n"
-
-    if "skin_temperature" in last:
-        text += f"🌡 Температура: <b>{last['skin_temperature']}°C</b>\n"
-
-    sl = last.get("sleep")
-    if sl:
-        text += (
-            f"\n😴 <b>Сон:</b> {sl.get('total_hours', '?')}ч\n"
-            f"  Глубокий: {sl.get('deep_min', 0)} мин\n"
-            f"  REM: {sl.get('rem_min', 0)} мин\n"
-            f"  Качество: {sl.get('quality_pct', '?')}%\n"
-        )
-
-    text += (
-        f"\n⏰ Обновлено: {metrics[0]['timestamp'].strftime('%H:%M') if hasattr(metrics[0]['timestamp'], 'strftime') else '?'}\n"
-        f"\n/watch_disconnect — отвязать часы"
-    )
-    await message.answer(text, reply_markup=main_keyboard())
 
 
 @watch_router.message(Command("watch_connect"))

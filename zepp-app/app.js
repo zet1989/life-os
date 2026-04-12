@@ -1,11 +1,15 @@
-App({
-  globalData: {},
+import { BaseApp } from '@zeppos/zml/base-app';
 
-  onCreate() {
-    console.log('Life OS Sync: App started');
-  },
+App(
+  BaseApp({
+    globalData: {},
 
-  onDestroy() {
-    console.log('Life OS Sync: App destroyed');
-  },
-});
+    onCreate() {
+      console.log('Life OS Sync: App started');
+    },
+
+    onDestroy() {
+      console.log('Life OS Sync: App destroyed');
+    },
+  })
+);

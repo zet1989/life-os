@@ -3,8 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev":     "zeus dev",
-    "build":   "zeus build",
+    "dev": "zeus dev",
+    "build": "zeus build",
     "preview": "zeus preview"
+  },
+  "dependencies": {
+    "@zeppos/zml": "^0.0.43"
   }
 }

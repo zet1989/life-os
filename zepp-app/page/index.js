@@ -1,164 +1,154 @@
 /**
- * Life OS Sync — Status Page (Zepp OS)
+ * Life OS Sync — Status Page (Zepp OS 4.x)
  *
- * Экран, который открывается при запуске приложения на часах.
- * Показывает: статус последней синхронизации, время, метрики.
- * Кнопка «Синхр. сейчас» запускает AppService немедленно через alarm(delay=1).
+ * Экран приложения: статус синхронизации, кнопка «Синхр. сейчас».
+ * Сбор данных с датчиков → отправка через Side Service (BLE → fetch).
  */
 
 import { createWidget, widget, prop, align, text_style } from '@zos/ui';
-import { storage } from '@zos/storage';
-import { set as setAlarm } from '@zos/alarm';
+import { LocalStorage } from '@zos/storage';
 import { px } from '@zos/utils';
-import { INTERVAL_MINUTES } from '../config';
+import { HeartRate, Step, Calorie, Distance, Sleep, BloodOxygen, Stress } from '@zos/sensor';
 
-// Цвета
-const COLOR_PRIMARY  = 0x179dde;  // Life OS blue
-const COLOR_SUCCESS  = 0x00d68f;  // зелёный
-const COLOR_WARNING  = 0xff9f43;  // оранжевый
-const COLOR_ERROR    = 0xff6b6b;  // красный
-const COLOR_MUTED    = 0x666666;  // серый
-const COLOR_TEXT     = 0xffffff;  // белый
+import { BasePage } from '@zeppos/zml/base-page';
+import { API_KEY, SERVER_URL, INTERVAL_MINUTES } from '../config';
 
-// Ширина и высота экрана Amazfit Balance 2 (480×520)
+const localStorage = new LocalStorage();
+
+const COLOR_PRIMARY = 0x179dde;
+const COLOR_SUCCESS = 0x00d68f;
+const COLOR_ERROR   = 0xff6b6b;
+const COLOR_MUTED   = 0x666666;
 const W = 480;
 
-function formatTime(tsStr) {
-  if (!tsStr) return 'Никогда';
-  const ts = parseInt(tsStr);
-  if (isNaN(ts)) return '—';
-  const d  = new Date(ts);
-  const hh = d.getHours().toString().padStart(2, '0');
-  const mm = d.getMinutes().toString().padStart(2, '0');
-  return hh + ':' + mm;
+function collectHealthData() {
+  const data = {};
+  try { const s = new Step();        const v = s.getCurrent();        if (v > 0) data.steps = v;        } catch (e) {}
+  try { const c = new Calorie();     const v = c.getCurrent();        if (v > 0) data.calories = v;     } catch (e) {}
+  try { const d = new Distance();    const v = d.getCurrent();        if (v > 0) data.distance = v;     } catch (e) {}
+  try { const h = new HeartRate();   const v = h.getLast();            if (v > 0) data.heart_rate = v;   } catch (e) {}
+  try { const b = new BloodOxygen(); const r = b.getCurrent();        if (r && r.value > 0) data.spo2 = r.value; } catch (e) {}
+  try { const st = new Stress();     const r = st.getCurrent();       if (r && r.value > 0) data.stress = r.value; } catch (e) {}
+  try {
+    const sl = new Sleep();
+    const info = sl.getInfo();
+    if (info && info.totalTime > 0) {
+      data.sleep = { total_min: info.totalTime, deep_min: info.deepTime || 0 };
+    }
+  } catch (e) {}
+  return data;
 }
 
-Page({
-  build() {
-    const status     = storage.getItem('last_sync_status') || 'none';
-    const lastTime   = storage.getItem('last_sync_time');
-    const lastKeys   = storage.getItem('last_sync_keys')   || '';
-    const errDetail  = storage.getItem('last_sync_error')  || '';
-    const interval   = parseInt(INTERVAL_MINUTES || '15');
+function formatTime(tsStr) {
+  if (!tsStr) return '--:--';
+  const ts = parseInt(tsStr);
+  if (isNaN(ts)) return '--:--';
+  const d = new Date(ts);
+  return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+}
 
-    // ── Заголовок ──────────────────────────────────────────
-    createWidget(widget.TEXT, {
-      x: 0, y: px(18), w: W, h: px(44),
-      text:       'Life OS Sync',
-      text_size:  px(34),
-      color:      COLOR_PRIMARY,
-      align_h:    align.CENTER_H,
-    });
+Page(
+  BasePage({
+    state: { statusWidget: null, hintWidget: null },
 
-    // ── Статус-строка ──────────────────────────────────────
-    let statusIcon  = '⏳';
-    let statusColor = COLOR_WARNING;
-    let statusText  = 'Ожидание';
+    build() {
+      const lastStatus = localStorage.getItem('last_sync_status') || 'none';
+      const lastTime = localStorage.getItem('last_sync_time');
+      const lastKeys = localStorage.getItem('last_sync_keys') || '';
 
-    if (status === 'ok') {
-      statusIcon  = '✓';
-      statusColor = COLOR_SUCCESS;
-      statusText  = 'OK';
-    } else if (status === 'error') {
-      statusIcon  = '✗';
-      statusColor = COLOR_ERROR;
-      statusText  = 'Ошибка';
-    } else if (status === 'not_configured') {
-      statusIcon  = '!';
-      statusColor = COLOR_WARNING;
-      statusText  = 'Не настроено';
-    } else if (status === 'no_data') {
-      statusIcon  = '?';
-      statusColor = COLOR_MUTED;
-      statusText  = 'Нет данных';
-    }
+      let statusText = 'Ожидание';
+      let statusColor = COLOR_MUTED;
+      if (lastStatus === 'ok')    { statusText = '✓ OK';     statusColor = COLOR_SUCCESS; }
+      if (lastStatus === 'error') { statusText = '✗ Ошибка'; statusColor = COLOR_ERROR; }
 
-    createWidget(widget.TEXT, {
-      x: 0, y: px(70), w: W, h: px(40),
-      text:      statusIcon + ' ' + statusText,
-      text_size: px(30),
-      color:     statusColor,
-      align_h:   align.CENTER_H,
-    });
-
-    // ── Время последней синхронизации ──────────────────────
-    createWidget(widget.TEXT, {
-      x: 0, y: px(116), w: W, h: px(32),
-      text:      'Последняя: ' + formatTime(lastTime),
-      text_size: px(24),
-      color:     COLOR_MUTED,
-      align_h:   align.CENTER_H,
-    });
-
-    // ── Переданные метрики ─────────────────────────────────
-    const metricsLabel = lastKeys
-      ? lastKeys.split(',').join(' · ')
-      : 'нет данных';
-
-    createWidget(widget.TEXT, {
-      x: px(20), y: px(156), w: W - px(40), h: px(48),
-      text:       metricsLabel,
-      text_size:  px(20),
-      color:      COLOR_MUTED,
-      align_h:    align.CENTER_H,
-      text_style: text_style.WRAP,
-    });
-
-    // ── Детали ошибки (если есть) ──────────────────────────
-    if (status === 'error' && errDetail) {
+      // Title
       createWidget(widget.TEXT, {
-        x: px(20), y: px(210), w: W - px(40), h: px(40),
-        text:       errDetail.slice(0, 60),
-        text_size:  px(18),
-        color:      COLOR_ERROR,
-        text_style: text_style.WRAP,
+        x: 0, y: px(18), w: W, h: px(44),
+        text: 'Life OS Sync', text_size: px(34), color: COLOR_PRIMARY, align_h: align.CENTER_H,
       });
-    }
 
-    // ── Интервал ───────────────────────────────────────────
-    createWidget(widget.TEXT, {
-      x: 0, y: px(260), w: W, h: px(30),
-      text:      'Интервал: каждые ' + interval + ' мин',
-      text_size: px(22),
-      color:     COLOR_MUTED,
-      align_h:   align.CENTER_H,
-    });
+      // Status
+      this.state.statusWidget = createWidget(widget.TEXT, {
+        x: 0, y: px(80), w: W, h: px(40),
+        text: statusText, text_size: px(28), color: statusColor, align_h: align.CENTER_H,
+      });
 
-    // ── Кнопка «Синхронизировать сейчас» ──────────────────
-    createWidget(widget.BUTTON, {
-      x: px(40), y: px(306), w: W - px(80), h: px(70),
-      text:        'Синхр. сейчас',
-      text_size:   px(26),
-      normal_color: COLOR_PRIMARY,
-      press_color:  0x0d6fa8,
-      func: () => {
-        // Запустить AppService немедленно (через 1 сек)
-        setAlarm({
-          delay: 1,
-          file:  'app-service/index.js',
-          args:  {},
-        });
-        // Обновить индикатор
-        createWidget(widget.TEXT, {
-          x: 0, y: px(386), w: W, h: px(30),
-          text:      'Запущено...',
-          text_size: px(22),
-          color:     COLOR_SUCCESS,
-          align_h:   align.CENTER_H,
-        });
-      },
-    });
-
-    // ── Подсказка по настройке ─────────────────────────────
-    if (status === 'not_configured' || status === 'none') {
+      // Last sync time
       createWidget(widget.TEXT, {
-        x: px(20), y: px(390), w: W - px(40), h: px(66),
-        text:       'Настройка: Health → /watch_connect → заполни config.js → пересобери',
-        text_size:  px(18),
-        color:      COLOR_MUTED,
-        text_style: text_style.WRAP,
-        align_h:    align.CENTER_H,
+        x: 0, y: px(126), w: W, h: px(30),
+        text: 'Последняя: ' + formatTime(lastTime),
+        text_size: px(22), color: COLOR_MUTED, align_h: align.CENTER_H,
       });
-    }
-  },
-});
+
+      // Metrics
+      createWidget(widget.TEXT, {
+        x: px(20), y: px(164), w: W - px(40), h: px(48),
+        text: lastKeys ? lastKeys.split(',').join(' · ') : '',
+        text_size: px(20), color: COLOR_MUTED, align_h: align.CENTER_H, text_style: text_style.WRAP,
+      });
+
+      // Interval
+      createWidget(widget.TEXT, {
+        x: 0, y: px(220), w: W, h: px(30),
+        text: 'Интервал: ' + (INTERVAL_MINUTES || 15) + ' мин',
+        text_size: px(22), color: COLOR_MUTED, align_h: align.CENTER_H,
+      });
+
+      // Sync button
+      const self = this;
+      createWidget(widget.BUTTON, {
+        x: px(40), y: px(280), w: W - px(80), h: px(70),
+        text: 'Синхр. сейчас', text_size: px(26),
+        normal_color: COLOR_PRIMARY, press_color: 0x0d6fa8,
+        click_func: () => { self.syncNow(); },
+      });
+
+      // Hint line
+      this.state.hintWidget = createWidget(widget.TEXT, {
+        x: px(20), y: px(370), w: W - px(40), h: px(60),
+        text: '', text_size: px(20), color: COLOR_MUTED,
+        align_h: align.CENTER_H, text_style: text_style.WRAP,
+      });
+    },
+
+    syncNow() {
+      const data = collectHealthData();
+      const keys = Object.keys(data);
+
+      if (keys.length === 0) {
+        this.setHint('Нет данных с датчиков');
+        return;
+      }
+
+      this.setHint('Отправка ' + keys.length + ' метрик...');
+
+      this.httpRequest({
+        method: 'post',
+        url: SERVER_URL,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + API_KEY,
+        },
+        body: data,
+      })
+        .then((result) => {
+          localStorage.setItem('last_sync_status', 'ok');
+          localStorage.setItem('last_sync_time', Date.now().toString());
+          localStorage.setItem('last_sync_keys', keys.join(','));
+          this.state.statusWidget.setProperty(prop.MORE, { text: '✓ OK', color: COLOR_SUCCESS });
+          this.setHint(keys.join(' · '));
+        })
+        .catch((err) => {
+          localStorage.setItem('last_sync_status', 'error');
+          this.state.statusWidget.setProperty(prop.MORE, { text: '✗ Ошибка', color: COLOR_ERROR });
+          this.setHint(String(err).slice(0, 80));
+        });
+    },
+
+    setHint(text) {
+      if (this.state.hintWidget) {
+        this.state.hintWidget.setProperty(prop.MORE, { text: text });
+      }
+    },
+  })
+);
