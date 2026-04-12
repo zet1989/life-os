@@ -154,6 +154,32 @@ async def _run_unified_polling() -> None:
     from src.webapp import setup_webapp_routes
     setup_webapp_routes(app)
 
+    # Amazfit Watch push endpoint
+    async def watch_push_handler(request: web.Request) -> web.Response:
+        """Принять push-данные от Amazfit Balance 2."""
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return web.json_response({"error": "missing auth"}, status=401)
+        api_key = auth[7:]
+
+        from src.db.queries import get_watch_user_by_api_key, update_watch_last_push
+        wt = await get_watch_user_by_api_key(api_key)
+        if not wt:
+            return web.json_response({"error": "invalid key"}, status=403)
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        from src.integrations.amazfit import process_watch_push
+        data = await process_watch_push(wt["user_id"], payload)
+        await update_watch_last_push(wt["user_id"])
+
+        return web.json_response({"ok": True, "saved_keys": list(data.keys())})
+
+    app.router.add_post("/api/watch/push", watch_push_handler)
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", settings.webhook_port or 8443)
