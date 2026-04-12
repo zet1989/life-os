@@ -52,6 +52,14 @@ async def get_model_config(task_type: str) -> dict:
                 "temperature": 0.3,
                 "fallback_model": "openai/gpt-4o-mini",
             }
+        # Вопросы нутрициологу (советы, добавки, совместимость) → GPT-4o
+        elif task_type == "nutrition_consult":
+            config = {
+                "model": "openai/gpt-4o",
+                "max_tokens": 1500,
+                "temperature": 0.4,
+                "fallback_model": "openai/gpt-4o-mini",
+            }
         # Мерж профиля — нужен достаточный max_tokens чтобы не обрезать
         elif task_type == "profile_merge":
             config = {

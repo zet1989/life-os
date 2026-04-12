@@ -39,6 +39,26 @@ watch_router = Router()  # Отдельный роутер для /watch_connect
 BOT_SOURCE = "health"
 MSK = ZoneInfo("Europe/Moscow")
 
+# Паттерны для определения вопросов (vs логирование еды)
+_QUESTION_PATTERNS = re.compile(
+    r"(?:^|\s)(?:можно|когда|как|зачем|почему|сколько|что|какой|какие|какую|какое"
+    r"|стоит ли|нужно ли|а если|посоветуй|подскажи|расскажи|объясни|помоги"
+    r"|лучше|хуже|вредно|полезно|опасно|безопасно|совместим"
+    r"|принимать|пить|есть ли|бывает|можно ли|нормально ли"
+    r"|правда ли|чем заменить|чем отличается|для чего|от чего"
+    r"|а что|добавки|витамин|лекарств|бад|таблетк|капсул|дозировк"
+    r"|перенести|сочетать|совмещать|натощак|до еды|после еды|с едой"
+    r"|утром|вечером|на ночь|перед сном)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_question(text: str) -> bool:
+    """Определить, является ли текст вопросом/запросом совета, а не описанием еды."""
+    if text.rstrip().endswith("?"):
+        return True
+    return bool(_QUESTION_PATTERNS.search(text))
+
 
 def _now_str() -> str:
     """Текущее время в MSK для промптов."""
@@ -884,7 +904,9 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
     messages.extend(history)
     messages.append({"role": "user", "content": text})
     await save_message(user_id, BOT_SOURCE, "user", text)
-    result = await chat(messages=messages, task_type="meal_photo", user_id=user_id, bot_source=BOT_SOURCE)
+    # Вопросы/советы → gpt-4o (умнее), логирование еды → gpt-4o-mini (дешевле)
+    task = "nutrition_consult" if _is_question(text) else "meal_photo"
+    result = await chat(messages=messages, task_type=task, user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)
 
