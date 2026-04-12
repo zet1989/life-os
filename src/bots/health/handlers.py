@@ -841,7 +841,7 @@ async def _process_profile(message: Message, user_id: int, text: str) -> None:
 
     await message.answer(
         "✅ Профиль обновлён!\n\n"
-        f"<i>{merged[:500]}</i>\n\n"
+        f"{merged}\n\n"
         "Буду учитывать во всех рекомендациях.",
         reply_markup=main_keyboard(),
     )
