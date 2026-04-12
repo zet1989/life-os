@@ -16,9 +16,9 @@ from src.ai.vision import analyze_photo
 from src.ai.whisper import transcribe_voice
 from src.core.context import build_messages, save_assistant_reply
 from src.db.queries import (
-    create_event, get_active_goals, get_today_meals, get_today_messages,
-    get_today_water, get_today_workouts, get_user, get_weight_history,
-    save_message, update_user_settings,
+    create_event, get_active_goals, get_meals_range, get_today_meals,
+    get_today_messages, get_today_water, get_today_workouts, get_user,
+    get_weight_history, save_message, update_user_settings,
 )
 from src.utils.telegram import safe_answer, safe_answer_voice, safe_edit
 from src.bots.health.prompts import (
@@ -149,6 +149,52 @@ async def _today_meals_context(user_id: int) -> str:
 
     header = f"📋 СЪЕДЕНО СЕГОДНЯ ({len(meals)} приёмов):"
     footer = f"ИТОГО за сегодня: {total_cal} ккал, Б:{total_prot} Ж:{total_fat} У:{total_carbs}"
+    return header + "\n" + "\n".join(lines) + "\n" + footer
+
+
+async def _weekly_meals_context(user_id: int) -> str:
+    """Собрать контекст питания за 7 дней для анализа вопросов."""
+    from datetime import timedelta
+    now = datetime.now(MSK)
+    date_to = now.strftime("%Y-%m-%d")
+    date_from = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    meals = await get_meals_range(user_id, date_from, date_to)
+    if not meals:
+        return "📊 РАЦИОН ЗА НЕДЕЛЮ: нет данных."
+
+    # Агрегация по дням
+    from collections import defaultdict
+    days: dict[str, dict] = defaultdict(lambda: {"cal": 0, "prot": 0, "fat": 0, "carbs": 0, "fiber": 0, "meals": []})
+    for m in meals:
+        jd = m.get("json_data") or {}
+        day_key = m["timestamp"].strftime("%d.%m") if hasattr(m.get("timestamp", ""), "strftime") else "?"
+        days[day_key]["cal"] += jd.get("calories", 0) or 0
+        days[day_key]["prot"] += jd.get("protein", 0) or 0
+        days[day_key]["fat"] += jd.get("fat", 0) or 0
+        days[day_key]["carbs"] += jd.get("carbs", 0) or 0
+        days[day_key]["fiber"] += jd.get("fiber", 0) or 0
+        desc = jd.get("description") or (m.get("raw_text") or "")[:40]
+        days[day_key]["meals"].append(desc)
+
+    lines = []
+    total_days = len(days)
+    sum_cal = sum_prot = sum_fat = sum_carbs = sum_fiber = 0
+    for day, d in sorted(days.items()):
+        lines.append(f"  {day}: {d['cal']} ккал (Б:{d['prot']} Ж:{d['fat']} У:{d['carbs']} Кл:{d['fiber']}) — {', '.join(d['meals'][:5])}")
+        sum_cal += d["cal"]
+        sum_prot += d["prot"]
+        sum_fat += d["fat"]
+        sum_carbs += d["carbs"]
+        sum_fiber += d["fiber"]
+
+    avg_cal = sum_cal // max(total_days, 1)
+    avg_prot = sum_prot // max(total_days, 1)
+    avg_fat = sum_fat // max(total_days, 1)
+    avg_carbs = sum_carbs // max(total_days, 1)
+    avg_fiber = sum_fiber // max(total_days, 1)
+
+    header = f"📊 РАЦИОН ЗА НЕДЕЛЮ ({total_days} дней, {len(meals)} приёмов):"
+    footer = f"СРЕДНЕЕ В ДЕНЬ: {avg_cal} ккал, Б:{avg_prot} Ж:{avg_fat} У:{avg_carbs} Кл:{avg_fiber}"
     return header + "\n" + "\n".join(lines) + "\n" + footer
 
 
@@ -885,14 +931,21 @@ async def _process_water_text(message: Message, user_id: int, text: str) -> None
 
 async def _process_food_text(message: Message, user_id: int, text: str) -> None:
     """Обработка текстового описания еды — STATELESS."""
+    question = _is_question(text)
     # Параллельные DB-запросы для ускорения
-    meals_ctx, settings, meds_ctx, watch_ctx, is_wife = await asyncio.gather(
+    gather_tasks = [
         _today_meals_context(user_id),
         _get_user_settings(user_id),
         _medications_context(user_id),
         _watch_context(user_id),
         _is_wife(user_id),
-    )
+    ]
+    if question:
+        gather_tasks.append(_weekly_meals_context(user_id))
+    results = await asyncio.gather(*gather_tasks)
+    meals_ctx, settings, meds_ctx, watch_ctx, is_wife = results[:5]
+    weekly_ctx = results[5] if question else ""
+
     prompt_template = WIFE_NUTRITIONIST_SYSTEM if is_wife else NUTRITIONIST_SYSTEM
     system = prompt_template.format(
         current_time=_now_str(),
@@ -903,6 +956,8 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
         system += f"\n\n{meds_ctx}"
     if watch_ctx:
         system += f"\n\n{watch_ctx}"
+    if weekly_ctx:
+        system += f"\n\n{weekly_ctx}"
     # Короткая история — для связного диалога без раздувания токенов
     messages = [{"role": "system", "content": system}]
     history = await get_today_messages(user_id, BOT_SOURCE, limit=4)
@@ -910,7 +965,7 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
     messages.append({"role": "user", "content": text})
     await save_message(user_id, BOT_SOURCE, "user", text)
     # Вопросы/советы → gpt-4o (умнее), логирование еды → gpt-4o-mini (дешевле)
-    task = "nutrition_consult" if _is_question(text) else "meal_photo"
+    task = "nutrition_consult" if question else "meal_photo"
     result = await chat(messages=messages, task_type=task, user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)

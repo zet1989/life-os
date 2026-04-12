@@ -218,11 +218,12 @@ git push origin main  # → триггерит GitHub Actions
 | task_type | Модель | max_tokens | Назначение |
 |-----------|--------|-----------|------------|
 | meal_photo | gpt-4o-mini | 500 | Анализ еды: КБЖУ + health score + советы + оценка дня |
-| doctor_consult | gpt-4o | 2000 | Медицинские консультации, анализы (критичная, без free fallback) |
+| nutrition_consult | deepseek-v3.2 | 1500 | Вопросы нутрициологу (советы, добавки, анализ рациона) |
+| doctor_consult | gpt-4o | 2000 | Медицинские консультации, анализы (критичная) |
 | workout_parse | gpt-4o-mini | 500 | Парсинг тренировки |
-| business_strategy | gpt-4o | 2000 | Бизнес-стратегия (критичная, без free fallback) |
-| diary_reflection | claude-3.5-sonnet | 1500 | Психология - дневник |
-| mentor_discussion | claude-3.5-sonnet | 3000 | Ментор - анализ обсуждений |
+| business_strategy | deepseek-v3.2 | 2000 | Бизнес-стратегия |
+| diary_reflection | deepseek-v3.2 | 2000 | Психология - дневник |
+| mentor_discussion | deepseek-v3.2 | 2000 | Ментор - анализ обсуждений |
 | daily_summary | gpt-4o-mini | 800 | Дневная сводка КБЖУ |
 | general_chat | gpt-4o-mini | 1000 | Общий чат |
 
@@ -230,7 +231,7 @@ git push origin main  # → триггерит GitHub Actions
 
 - Daily API limit: $2.0
 - Monthly API limit: $20.0
-- Ожидаемый расход: ~$13-18/мес
+- Ожидаемый расход: ~$5-10/мес (после перехода на DeepSeek V3.2)
 - Бесплатные модели отключены (см. 7.6)
 
 ---
@@ -305,6 +306,7 @@ git push origin main  # → триггерит GitHub Actions
 | Режим | Кнопка | Модель | Архитектура | Описание |
 |-------|--------|--------|-------------|----------|
 | **Еда** | 🍽 Еда | gpt-4o-mini | STATELESS (0 history) | Фото/текст → КБЖУ JSON → карточка |
+| **Вопрос нутрициологу** | 🍽 Еда | deepseek-v3.2 | История (4 сообщ.) + недельный рацион | Вопросы о добавках, нутриентах, совместимости |
 | **Тренировка** | 🏋️ Тренировка | gpt-4o-mini | STATELESS | Описание → exercises JSON → карточка |
 | **Доктор** | 🩺 Доктор | gpt-4o (critical) | С ИСТОРИЕЙ (build_messages) | Медконсультации, анализы, лекарства |
 | **Профиль** | 📋 Мой профиль | — | — | Просмотр/обновление профиля (users.system_prompt_overrides) |
@@ -400,6 +402,14 @@ API_MONTHLY_LIMIT_USD=20.0
 ---
 
 ## 12. Changelog (последние изменения)
+
+### 12 апреля 2026 — Нутрициолог v2: недельный анализ + DeepSeek V3.2
+- **Проблема:** Нутрициолог видел только сегодняшнее питание, не мог анализировать рацион комплексно, отписывался общими фразами на вопросы о добавках
+- **`src/bots/health/handlers.py`:** Добавлена `_weekly_meals_context()` — агрегация питания за 7 дней с разбивкой по дням (КБЖУ + клетчатка + список блюд) через `get_meals_range()`. Подключается автоматически при вопросах (`_is_question() == True`)
+- **`src/bots/health/handlers.py`:** `_process_food_text()` теперь при вопросах добавляет недельный контекст в system prompt. Параллельные DB-запросы через `asyncio.gather()`
+- **`src/bots/health/prompts.py`:** Добавлены правила 16-20 в NUTRITIONIST_SYSTEM и 10-12 в WIFE_NUTRITIONIST_SYSTEM: анализ рациона по цифрам, запрет отписок, обязательный расчёт нутриентов по недельным данным
+- **`src/ai/router.py`:** Стратегические задачи (психолог, ментор, мастер, бизнес-стратегия) переведены с Claude Sonnet 4 на DeepSeek V3.2 (в 10x дешевле: $0.26/M input vs $3/M). `nutrition_consult` тоже на DeepSeek V3.2 (вместо gpt-4o)
+- **`.github/copilot-instructions.md`:** Добавлено правило: после ЛЮБЫХ изменений обновлять PROJECT_CONTEXT.md и ROADMAP.md
 
 ### 11 апреля 2026 — File Extractor + Web App (Mini App)
 - **`src/integrations/obsidian/file_extractor.py`** (НОВЫЙ): Модуль извлечения текста из файлов — PDF (PyMuPDF), DOCX (python-docx), XLSX (openpyxl), CSV (stdlib), HTML (BeautifulSoup), TXT. Автоопределение кодировки (utf-8/cp1251/latin-1). Таблицы из DOCX/XLSX конвертируются в pipe-delimited текст

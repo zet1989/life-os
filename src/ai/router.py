@@ -52,10 +52,10 @@ async def get_model_config(task_type: str) -> dict:
                 "temperature": 0.3,
                 "fallback_model": "openai/gpt-4o-mini",
             }
-        # Вопросы нутрициологу (советы, добавки, совместимость) → GPT-4o
+        # Вопросы нутрициологу (советы, добавки, совместимость) → DeepSeek V3.2
         elif task_type == "nutrition_consult":
             config = {
-                "model": "openai/gpt-4o",
+                "model": "deepseek/deepseek-v3.2",
                 "max_tokens": 1500,
                 "temperature": 0.4,
                 "fallback_model": "openai/gpt-4o-mini",
