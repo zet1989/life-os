@@ -972,6 +972,7 @@ async def handle_text(message: Message, db_user: dict) -> None:
     text = message.text or ""
 
     mode = get_user_mode(user_id)
+    logger.info("health.handle_text", user_id=user_id, mode=mode.value, text_len=len(text))
     if mode == Mode.WORKOUT:
         await _process_workout(message, user_id, text)
     elif mode == Mode.DOCTOR:
@@ -1016,39 +1017,45 @@ async def _process_water_text(message: Message, user_id: int, text: str) -> None
 
 async def _process_consult(message: Message, user_id: int, text: str) -> None:
     """Режим Консультация — всегда 30-дневный контекст, nutrition_consult модель."""
-    gather_tasks = [
-        _today_meals_context(user_id),
-        _get_user_settings(user_id),
-        _medications_context(user_id),
-        _watch_context(user_id),
-        _is_wife(user_id),
-        _weekly_meals_context(user_id),
-    ]
-    results = await asyncio.gather(*gather_tasks)
-    meals_ctx, settings, meds_ctx, watch_ctx, is_wife, weekly_ctx = results
+    logger.info("consult.start", user_id=user_id)
+    try:
+        gather_tasks = [
+            _today_meals_context(user_id),
+            _get_user_settings(user_id),
+            _medications_context(user_id),
+            _watch_context(user_id),
+            _is_wife(user_id),
+            _weekly_meals_context(user_id),
+        ]
+        results = await asyncio.gather(*gather_tasks)
+        meals_ctx, settings, meds_ctx, watch_ctx, is_wife, weekly_ctx = results
 
-    prompt_template = WIFE_NUTRITIONIST_SYSTEM if is_wife else NUTRITIONIST_SYSTEM
-    system = prompt_template.format(
-        current_time=_now_str(),
-        today_meals_context=meals_ctx,
-        user_settings=settings,
-    )
-    if meds_ctx:
-        system += f"\n\n{meds_ctx}"
-    if watch_ctx:
-        system += f"\n\n{watch_ctx}"
-    if weekly_ctx:
-        system += f"\n\n{weekly_ctx}"
+        prompt_template = WIFE_NUTRITIONIST_SYSTEM if is_wife else NUTRITIONIST_SYSTEM
+        system = prompt_template.format(
+            current_time=_now_str(),
+            today_meals_context=meals_ctx,
+            user_settings=settings,
+        )
+        if meds_ctx:
+            system += f"\n\n{meds_ctx}"
+        if watch_ctx:
+            system += f"\n\n{watch_ctx}"
+        if weekly_ctx:
+            system += f"\n\n{weekly_ctx}"
 
-    messages = [{"role": "system", "content": system}]
-    history = await get_today_messages(user_id, BOT_SOURCE, limit=6)
-    messages.extend(history)
-    messages.append({"role": "user", "content": text})
-    await save_message(user_id, BOT_SOURCE, "user", text)
+        messages = [{"role": "system", "content": system}]
+        history = await get_today_messages(user_id, BOT_SOURCE, limit=6)
+        messages.extend(history)
+        messages.append({"role": "user", "content": text})
+        await save_message(user_id, BOT_SOURCE, "user", text)
 
-    result = await chat(messages=messages, task_type="nutrition_consult", user_id=user_id, bot_source=BOT_SOURCE)
-    await safe_answer(message, result, reply_markup=main_keyboard())
-    await save_assistant_reply(user_id, BOT_SOURCE, result)
+        result = await chat(messages=messages, task_type="nutrition_consult", user_id=user_id, bot_source=BOT_SOURCE)
+        await safe_answer(message, result, reply_markup=main_keyboard())
+        await save_assistant_reply(user_id, BOT_SOURCE, result)
+        logger.info("consult.done", user_id=user_id)
+    except Exception:
+        logger.exception("consult.error", user_id=user_id)
+        await message.answer("❌ Ошибка при обработке запроса. Попробуй ещё раз.", reply_markup=main_keyboard())
 
 
 async def _process_food_text(message: Message, user_id: int, text: str) -> None:
