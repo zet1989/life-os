@@ -31,50 +31,14 @@ async def get_model_config(task_type: str) -> dict:
 
     config = await _db_get_model_config(task_type)
     if config is None:
-        # Стратегические задачи → DeepSeek V3.2 (GPT-5 class, 10x дешевле Sonnet 4)
-        if task_type in (
-            "mentor_idea", "mentor_discussion", "mentor_strategy", "mentor_report",
-            "master_audit", "master_goal", "master_talk", "quarterly_audit",
-            "psychology_diary", "psychology_report", "diary_reflection",
-            "business_strategy",
-        ):
-            config = {
-                "model": "deepseek/deepseek-v3.2",
-                "max_tokens": 2000,
-                "temperature": 0.5,
-                "fallback_model": "openai/gpt-4o-mini",
-            }
-        # Медицинские консультации → DeepSeek V3.2
-        elif task_type == "doctor_consult":
-            config = {
-                "model": "deepseek/deepseek-v3.2",
-                "max_tokens": 2000,
-                "temperature": 0.3,
-                "fallback_model": "openai/gpt-4o-mini",
-            }
-        # Вопросы нутрициологу (советы, добавки, совместимость) → DeepSeek V3.2
-        elif task_type == "nutrition_consult":
-            config = {
-                "model": "deepseek/deepseek-v3.2",
-                "max_tokens": 1500,
-                "temperature": 0.4,
-                "fallback_model": "openai/gpt-4o-mini",
-            }
-        # Мерж профиля — нужен достаточный max_tokens чтобы не обрезать
-        elif task_type == "profile_merge":
-            config = {
-                "model": "openai/gpt-4o-mini",
-                "max_tokens": 2000,
-                "temperature": 0.3,
-                "fallback_model": None,
-            }
-        else:
-            config = {
-                "model": "openai/gpt-4o-mini",
-                "max_tokens": 1000,
-                "temperature": 0.5,
-                "fallback_model": None,
-            }
+        # Все задачи → DeepSeek V3.2 (GPT-5 class, дешевле gpt-4o-mini по output)
+        # fallback → gpt-4o-mini на случай недоступности DeepSeek
+        config = {
+            "model": "deepseek/deepseek-v3.2",
+            "max_tokens": 1000,
+            "temperature": 0.5,
+            "fallback_model": "openai/gpt-4o-mini",
+        }
     _model_cache[task_type] = config
     return config
 

@@ -403,6 +403,18 @@ API_MONTHLY_LIMIT_USD=20.0
 
 ## 12. Changelog (последние изменения)
 
+### 13 апреля 2026 — Единая модель: DeepSeek V3.2 на все задачи
+
+- **Причина:** DeepSeek V3.2 (GPT-5 class) — $0.26/$0.38 за 1M токенов. Output на 37% дешевле gpt-4o-mini ($0.38 vs $0.60), при значительно лучшем качестве.
+- **Изменения:**
+  - `src/ai/router.py` — упрощён: единый fallback `deepseek/deepseek-v3.2` для всех task_type, gpt-4o-mini только как fallback
+  - `sql/001_init_schema.sql` — все 25 seed-записей переведены на `deepseek/deepseek-v3.2`
+  - `sql/004_claude_sonnet_upgrade.sql` — миграция переписана: единый UPDATE для всех моделей → DeepSeek
+  - `docs/FULL_GUIDE.md` — обновлена таблица моделей
+  - Production DB: UPDATE 16 записей gpt-4o-mini → deepseek/deepseek-v3.2
+- **Итог:** Одна модель (DeepSeek V3.2) на все 30 задач + whisper для транскрипции. gpt-4o-mini только fallback.
+- **Файлы:** `src/ai/router.py`, `sql/001_init_schema.sql`, `sql/004_claude_sonnet_upgrade.sql`, `docs/FULL_GUIDE.md`
+
 ### 13 апреля 2026 — Полное удаление дорогих моделей (gpt-4o, Claude)
 
 - **Причина:** Оптимизация расходов — полностью убраны дорогие модели OpenAI (gpt-4o: $2.50/$10) и Claude (Sonnet 4: $3/$15). Оставлены только DeepSeek V3.2 ($0.26/$1.10) и gpt-4o-mini ($0.15/$0.60).
