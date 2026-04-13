@@ -1,6 +1,6 @@
 # Life OS — Полная проектная документация
 
-> **Последнее обновление:** 13 апреля 2026
+> **Последнее обновление:** 20 апреля 2026
 > **Автор:** Алексей (zet1989)
 > **Файл в .gitignore для сохранения приватности**
 
@@ -403,14 +403,38 @@ API_MONTHLY_LIMIT_USD=20.0
 
 ## 12. Changelog (последние изменения)
 
+### 13 апреля 2026 — Полное удаление дорогих моделей (gpt-4o, Claude)
+
+- **Причина:** Оптимизация расходов — полностью убраны дорогие модели OpenAI (gpt-4o: $2.50/$10) и Claude (Sonnet 4: $3/$15). Оставлены только DeepSeek V3.2 ($0.26/$1.10) и gpt-4o-mini ($0.15/$0.60).
+- **Изменения:**
+  - `src/ai/router.py` — все fallback_model с `openai/gpt-4o` → `openai/gpt-4o-mini`
+  - `sql/001_init_schema.sql` — полностью обновлены seed-данные: gpt-4o убран отовсюду, psychology_diary/master_goal → DeepSeek
+  - `sql/004_claude_sonnet_upgrade.sql` — все fallback `openai/gpt-4o` → `openai/gpt-4o-mini`
+  - Production DB: UPDATE 13 fallback + UPDATE 2 OCR primary (receipt_ocr, order_ocr: gpt-4o → gpt-4o-mini) + UPDATE 5 оставшихся fallback
+- **Итоговая маршрутизация:** DeepSeek V3.2 (стратегия, дневник, доктор, ментор) + gpt-4o-mini (всё остальное). gpt-4o и Claude полностью убраны.
+- **Файлы:** `src/ai/router.py`, `sql/001_init_schema.sql`, `sql/004_claude_sonnet_upgrade.sql`
+
+### 20 апреля 2026 — Полная замена Claude Sonnet 4 → DeepSeek V3.2
+
+- **Причина:** DeepSeek V3.2 — сопоставимое качество для стратегических задач при 10x меньшей стоимости ($0.26/$1.10 vs $3/$15 за 1M токенов).
+- **Изменения:**
+  - `sql/004_claude_sonnet_upgrade.sql` — все `anthropic/claude-sonnet-4` → `deepseek/deepseek-v3.2`
+  - `sql/001_init_schema.sql` — все `claude-3.5-sonnet` → `deepseek/deepseek-v3.2` в seed-данных model_routing
+  - `docs/FULL_GUIDE.md` — обновлена таблица моделей и секция использования
+  - `doctor_consult` переведён с gpt-4o на DeepSeek V3.2
+  - Production DB обновлена: UPDATE model_routing
+- **Затронутые task_type:** diary_reflection, mentor_*, master_audit, master_talk, master_goal, psychology_diary, psychology_report, business_strategy, quarterly_audit, doctor_consult
+- **Файлы:** `sql/004_claude_sonnet_upgrade.sql`, `sql/001_init_schema.sql`, `docs/FULL_GUIDE.md`
+
 ### 13 апреля 2026 — Фикс автосинхронизации часов: архитектурная переработка AppService
 
 - **Проблема:** Автосинхронизация часов не работала — данные собирались фоновым сервисом каждые 15 мин, но НИКОГДА не отправлялись на сервер. Причина: Zepp OS AppService в режиме Single Execution (setAlarm) имеет лимит 600мс — async BLE messaging физически не успевает завершиться. `getApp()._options.globalData.messaging` всегда null в контексте AppService (ZML не инициализирован). Также `setAlarm` вызывался ПОСЛЕ сбора данных — если сбор падал, цепочка alarm'ов разрывалась. URL alarm содержал `.js` суффикс, не совпадающий с app.json.
 - **Решение:**
   - **AppService полностью переписан:** удалён мёртвый код `trySendViaMessaging()` и `getApp` import. Alarm ставится ПЕРВЫМ (до сбора данных — цепочка не может прерваться). URL alarm исправлен на `app-service/index` (без .js). Добавлен `last_collect_time` и `collect_count` для отслеживания работы фона. Весь сбор данных в try/catch.
   - **Page улучшена:** Pending данные отправляются МГНОВЕННО при открытии (было через 12 сек). Свежая синхронизация через 3 сек (было 10). Показывает отдельно «Отправлено: HH:MM» и «Фон: HH:MM (ожидает отправки) [N]». Оранжевый цвет для pending статуса.
+  - **Формат времени сна:** `start_time`/`end_time` от датчика Sleep приходят как минуты от полуночи (1341 = 22:21, 1902 = 7:42). Добавлена конвертация `_minutes_to_hhmm()` в `amazfit.py` — теперь в БД и AI-контексте время в формате HH:MM.
   - **Архитектурное решение:** True background network sync невозможен в Zepp OS для сторонних приложений. AppService ТОЛЬКО собирает данные → localStorage. Page отправляет при открытии. Это ограничение платформы.
-- **Файлы:** `zepp-app/app-service/index.js` (переписан), `zepp-app/page/index.js` (улучшен)
+- **Файлы:** `zepp-app/app-service/index.js` (переписан), `zepp-app/page/index.js` (улучшен), `src/integrations/amazfit.py` (конвертация времени сна)
 
 ### 13 апреля 2026 — Данные часов доступны психологу + время засыпания/пробуждения
 

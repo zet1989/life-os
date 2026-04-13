@@ -42,7 +42,7 @@ async def get_model_config(task_type: str) -> dict:
                 "model": "deepseek/deepseek-v3.2",
                 "max_tokens": 2000,
                 "temperature": 0.5,
-                "fallback_model": "openai/gpt-4o",
+                "fallback_model": "openai/gpt-4o-mini",
             }
         # Медицинские консультации → DeepSeek V3.2
         elif task_type == "doctor_consult":
@@ -50,7 +50,7 @@ async def get_model_config(task_type: str) -> dict:
                 "model": "deepseek/deepseek-v3.2",
                 "max_tokens": 2000,
                 "temperature": 0.3,
-                "fallback_model": "openai/gpt-4o",
+                "fallback_model": "openai/gpt-4o-mini",
             }
         # Вопросы нутрициологу (советы, добавки, совместимость) → DeepSeek V3.2
         elif task_type == "nutrition_consult":
