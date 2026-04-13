@@ -403,6 +403,18 @@ API_MONTHLY_LIMIT_USD=20.0
 
 ## 12. Changelog (последние изменения)
 
+### 13 апреля 2026 — Расширение данных часов: 7 → 15 метрик
+
+- **Проблема:** Часы Amazfit Balance 2 собирали только 7 базовых метрик (шаги, дистанция, калории, пульс, SpO2, стресс, сон). Не использовались: температура тела, PAI, жиросжигание, стояние, тренировки, фазы сна (REM/лёгкий), пульс покоя
+- **Решение:** Расширена коллекция до 15 метрик на всех уровнях (часы → сервер → AI-контекст)
+
+**Изменённые файлы:**
+- **`zepp-app/app-service/index.js`:** `collectHealthData()` расширена — HeartRate (last/resting/avg/min/max), Stress (last + avg через getTodayByHour), Sleep (score + REM/light/awake стадии + дневной сон getNap), BodyTemperature, FatBurning, Pai (total+today), Stand, Workout (vo2Max, trainingLoad, recoveryTime)
+- **`zepp-app/page/index.js`:** Идентичное расширение `collectHealthData()` для ручной отправки
+- **`zepp-app/app.json`:** Новые permissions: calorie, body_temp, fat_burning, pai, stand, workout
+- **`src/integrations/amazfit.py`:** `process_watch_push()` — обработка новых полей; `format_summary()` — форматирование всех 15 метрик
+- **`src/bots/health/handlers.py`:** `_watch_context()` — AI-контекст расширен: дистанция, пульс покоя, оценка сна, REM/лёгкий/дневной сон, температура тела, жиросжигание, PAI, стояние, тренировка (VO₂max, нагрузка, восстановление)
+
 ### 13 апреля 2026 — Кнопка «Консультация» + оптимизация режима Еда
 
 - **Проблема:** Вопросы по питанию (оцени, анализируй) обрабатывались в режиме Еда — подгружался 30-дневный контекст + тяжёлая модель → ответ >1 минуты вместо секунд

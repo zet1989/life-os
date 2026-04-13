@@ -122,6 +122,32 @@ async def process_watch_push(user_id: int, payload: dict[str, Any]) -> dict:
     # Температура кожи
     if "skin_temperature" in payload:
         data["skin_temperature"] = round(float(payload["skin_temperature"]), 1)
+    # Температура тела (новый датчик)
+    if "body_temperature" in payload:
+        data["body_temperature"] = round(float(payload["body_temperature"]), 1)
+    # Жиросжигание (минуты)
+    if "fat_burning_min" in payload:
+        data["fat_burning_min"] = int(payload["fat_burning_min"])
+    # PAI (Physical Activity Intelligence)
+    if "pai" in payload:
+        p = payload["pai"]
+        if isinstance(p, dict):
+            data["pai"] = {"total": int(p.get("total", 0)), "today": int(p.get("today", 0))}
+        elif isinstance(p, (int, float)):
+            data["pai"] = {"total": int(p)}
+    # Часы стоя
+    if "standing_hours" in payload:
+        data["standing_hours"] = int(payload["standing_hours"])
+    # Тренировка: VO2 Max, Training Load, Recovery Time
+    if "workout" in payload:
+        w = payload["workout"]
+        if isinstance(w, dict):
+            workout = {}
+            if w.get("vo2_max"): workout["vo2_max"] = round(float(w["vo2_max"]), 1)
+            if w.get("training_load"): workout["training_load"] = round(float(w["training_load"]))
+            if w.get("recovery_hours"): workout["recovery_hours"] = round(float(w["recovery_hours"]))
+            if workout:
+                data["workout"] = workout
 
     # Сохраняем только если есть реальные данные
     has_data = any(k not in ("source", "pushed_at") for k in data)
@@ -149,19 +175,47 @@ def format_summary(data: dict) -> str:
         parts.append(f"Сожжено: {data['calories_burned']} ккал")
     if "heart_rate" in data:
         hr = data["heart_rate"]
-        parts.append(f"Пульс: {hr.get('avg', '?')} (мин {hr.get('min', '?')}, макс {hr.get('max', '?')})")
+        hr_parts = []
+        if hr.get("avg"): hr_parts.append(f"ср {hr['avg']}")
+        if hr.get("min"): hr_parts.append(f"мин {hr['min']}")
+        if hr.get("max"): hr_parts.append(f"макс {hr['max']}")
+        if hr.get("resting"): hr_parts.append(f"покой {hr['resting']}")
+        parts.append(f"Пульс: {', '.join(hr_parts)}" if hr_parts else f"Пульс: {hr.get('last', '?')}")
     if "spo2" in data:
         sp = data["spo2"]
-        parts.append(f"SpO2: {sp.get('avg', '?')}%")
+        val = sp.get("avg", sp) if isinstance(sp, dict) else sp
+        parts.append(f"SpO2: {val}%")
     if "stress" in data:
         st = data["stress"]
-        parts.append(f"Стресс: {st.get('avg', '?')}/100")
+        if isinstance(st, dict):
+            parts.append(f"Стресс: {st.get('avg', st.get('last', '?'))}/100")
+        else:
+            parts.append(f"Стресс: {st}/100")
     if "sleep" in data:
         sl = data["sleep"]
-        parts.append(
-            f"Сон: {sl.get('total_hours', '?')}ч "
-            f"(глубокий {sl.get('deep_min', 0)} мин, REM {sl.get('rem_min', 0)} мин)"
-        )
+        sleep_parts = [f"{sl.get('total_hours', '?')}ч"]
+        if sl.get("score"): sleep_parts.append(f"оценка {sl['score']}")
+        if sl.get("deep_min"): sleep_parts.append(f"глубокий {sl['deep_min']} мин")
+        if sl.get("rem_min"): sleep_parts.append(f"REM {sl['rem_min']} мин")
+        if sl.get("light_min"): sleep_parts.append(f"лёгкий {sl['light_min']} мин")
+        if sl.get("nap_min"): sleep_parts.append(f"дневной сон {sl['nap_min']} мин")
+        parts.append(f"Сон: {', '.join(sleep_parts)}")
     if "skin_temperature" in data:
         parts.append(f"Температура кожи: {data['skin_temperature']}°C")
+    if "body_temperature" in data:
+        parts.append(f"Температура тела: {data['body_temperature']}°C")
+    if "fat_burning_min" in data:
+        parts.append(f"Жиросжигание: {data['fat_burning_min']} мин")
+    if "pai" in data:
+        p = data["pai"]
+        parts.append(f"PAI: {p.get('total', 0)} (сегодня +{p.get('today', 0)})")
+    if "standing_hours" in data:
+        parts.append(f"Стоя: {data['standing_hours']} ч")
+    if "workout" in data:
+        w = data["workout"]
+        w_parts = []
+        if w.get("vo2_max"): w_parts.append(f"VO₂max {w['vo2_max']}")
+        if w.get("training_load"): w_parts.append(f"нагрузка {w['training_load']}")
+        if w.get("recovery_hours"): w_parts.append(f"восстановление {w['recovery_hours']}ч")
+        if w_parts: parts.append(f"Тренировка: {', '.join(w_parts)}")
     return "⌚ Данные часов: " + " | ".join(parts) if parts else "⌚ Нет данных"
