@@ -8,6 +8,6 @@
     "preview": "zeus preview"
   },
   "dependencies": {
-    "@zeppos/zml": "^0.0.43"
+    "@zeppos/zml": "^0.0.42"
   }
 }
