@@ -114,6 +114,14 @@ async def process_watch_push(user_id: int, payload: dict[str, Any]) -> dict:
                 "rem_min": round(float(sl.get("rem_min", 0))),
                 "awake_min": round(float(sl.get("awake_min", 0))),
             }
+            if sl.get("score"):
+                data["sleep"]["score"] = int(sl["score"])
+            if sl.get("start_time"):
+                data["sleep"]["start_time"] = str(sl["start_time"])
+            if sl.get("end_time"):
+                data["sleep"]["end_time"] = str(sl["end_time"])
+            if sl.get("nap_min"):
+                data["sleep"]["nap_min"] = round(float(sl["nap_min"]))
             total = data["sleep"]["deep_min"] + data["sleep"]["rem_min"] + data["sleep"]["light_min"]
             if total > 0:
                 data["sleep"]["quality_pct"] = round(
@@ -199,6 +207,8 @@ def format_summary(data: dict) -> str:
         if sl.get("rem_min"): sleep_parts.append(f"REM {sl['rem_min']} мин")
         if sl.get("light_min"): sleep_parts.append(f"лёгкий {sl['light_min']} мин")
         if sl.get("nap_min"): sleep_parts.append(f"дневной сон {sl['nap_min']} мин")
+        if sl.get("start_time"): sleep_parts.append(f"уснул {sl['start_time']}")
+        if sl.get("end_time"): sleep_parts.append(f"проснулся {sl['end_time']}")
         parts.append(f"Сон: {', '.join(sleep_parts)}")
     if "skin_temperature" in data:
         parts.append(f"Температура кожи: {data['skin_temperature']}°C")

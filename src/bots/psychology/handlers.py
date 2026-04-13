@@ -128,12 +128,18 @@ async def _build_user_goals(user_id: int) -> str:
 
 async def _psychology_system(user_id: int) -> str:
     """Собрать полный system prompt для психолога с контекстом жизни."""
+    from src.core.watch import watch_context
+
     now_str = datetime.now(MSK).strftime("%d.%m.%Y %H:%M")
     life_context = await _build_life_context(user_id)
     user_goals = await _build_user_goals(user_id)
-    return PSYCHOLOGY_SYSTEM.format(
+    watch_ctx = await watch_context(user_id)
+    system = PSYCHOLOGY_SYSTEM.format(
         current_time=now_str, life_context=life_context, user_goals=user_goals,
     )
+    if watch_ctx:
+        system += f"\n\n{watch_ctx}"
+    return system
 
 
 # === /start ===
