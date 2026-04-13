@@ -230,13 +230,16 @@ async def get_meals_range(
     bot_source: str = "health",
 ) -> list[dict]:
     """Приёмы пищи за диапазон дат (ISO-строки YYYY-MM-DD)."""
+    from datetime import date as _date
+    d_from = _date.fromisoformat(date_from) if isinstance(date_from, str) else date_from
+    d_to = _date.fromisoformat(date_to) if isinstance(date_to, str) else date_to
     rows = await get_pool().fetch(
         """SELECT * FROM events
            WHERE user_id = $1 AND event_type = 'meal' AND bot_source = $2
              AND timestamp >= $3::date
              AND timestamp < ($4::date + INTERVAL '1 day')
            ORDER BY timestamp ASC""",
-        user_id, bot_source, date_from, date_to,
+        user_id, bot_source, d_from, d_to,
     )
     return [dict(r) for r in rows]
 
