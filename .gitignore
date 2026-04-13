@@ -11,5 +11,12 @@ dist/
 build/
 .idea/
 .vscode/
+node_modules/
+.agents/
+.specify/
+.github/agents/
+.github/prompts/
+skills-lock.json
+package-lock.json
 
 life-os/

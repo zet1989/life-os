@@ -118,6 +118,9 @@ Page(
 
       // Первая автосинхронизация через 10 секунд после запуска
       setTimeout(() => { this.syncNow(); }, 10000);
+
+      // Отправить невыгруженные данные фонового сервиса (если есть)
+      setTimeout(() => { this.flushPending(); }, 12000);
     },
 
     onDestroy() {
@@ -125,6 +128,35 @@ Page(
         clearInterval(this.state.autoSyncTimer);
         this.state.autoSyncTimer = null;
       }
+    },
+
+    flushPending() {
+      const pendingRaw = localStorage.getItem('pending_data');
+      if (!pendingRaw) return;
+
+      let pending;
+      try { pending = JSON.parse(pendingRaw); } catch (e) { return; }
+      const keys = Object.keys(pending);
+      if (keys.length === 0) return;
+
+      this.setHint('Фоновые данные: ' + keys.length + ' метрик...');
+      this.httpRequest({
+        method: 'post',
+        url: SERVER_URL,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + API_KEY,
+        },
+        body: pending,
+      })
+        .then(() => {
+          localStorage.removeItem('pending_data');
+          localStorage.removeItem('pending_keys');
+          this.setHint('Фоновые данные отправлены ✓');
+        })
+        .catch((err) => {
+          this.setHint('Фон. данные: ошибка ' + String(err).slice(0, 40));
+        });
     },
 
     syncNow() {

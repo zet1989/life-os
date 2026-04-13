@@ -49,7 +49,9 @@ _QUESTION_PATTERNS = re.compile(
     r"|правда ли|чем заменить|чем отличается|для чего|от чего"
     r"|а что|добавки|витамин|лекарств|бад|таблетк|капсул|дозировк"
     r"|перенести|сочетать|совмещать|натощак|до еды|после еды|с едой"
-    r"|утром|вечером|на ночь|перед сном)\b",
+    r"|утром|вечером|на ночь|перед сном"
+    r"|оцени|проанализируй|анализ|итог|резюме|статистик|сводк|динамик"
+    r"|сравни|покажи|обзор|отчёт|отчет|тренд|прогресс)\b",
     re.IGNORECASE,
 )
 
@@ -153,49 +155,112 @@ async def _today_meals_context(user_id: int) -> str:
 
 
 async def _weekly_meals_context(user_id: int) -> str:
-    """Собрать контекст питания за 7 дней для анализа вопросов."""
+    """Собрать контекст питания за 30 дней: детали за неделю + средние за месяц."""
     from datetime import timedelta
+    from collections import defaultdict
+
     now = datetime.now(MSK)
     date_to = now.strftime("%Y-%m-%d")
-    date_from = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-    meals = await get_meals_range(user_id, date_from, date_to)
-    if not meals:
-        return "📊 РАЦИОН ЗА НЕДЕЛЮ: нет данных."
+    date_from_month = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    date_from_week = (now - timedelta(days=7)).strftime("%Y-%m-%d")
 
-    # Агрегация по дням
-    from collections import defaultdict
-    days: dict[str, dict] = defaultdict(lambda: {"cal": 0, "prot": 0, "fat": 0, "carbs": 0, "fiber": 0, "meals": []})
+    meals = await get_meals_range(user_id, date_from_month, date_to)
+    if not meals:
+        return "📊 РАЦИОН: нет данных за последние 30 дней."
+
+    # Разделяем на последнюю неделю и более ранние
+    week_meals = []
+    older_meals = []
+    for m in meals:
+        ts = m.get("timestamp")
+        if ts and hasattr(ts, "strftime"):
+            if ts.strftime("%Y-%m-%d") >= date_from_week:
+                week_meals.append(m)
+            else:
+                older_meals.append(m)
+        else:
+            week_meals.append(m)
+
+    parts = []
+
+    # --- Детальная неделя ---
+    if week_meals:
+        days: dict[str, dict] = defaultdict(lambda: {"cal": 0, "prot": 0, "fat": 0, "carbs": 0, "fiber": 0, "meals": []})
+        for m in week_meals:
+            jd = m.get("json_data") or {}
+            day_key = m["timestamp"].strftime("%d.%m") if hasattr(m.get("timestamp", ""), "strftime") else "?"
+            days[day_key]["cal"] += jd.get("calories", 0) or 0
+            days[day_key]["prot"] += jd.get("protein", 0) or 0
+            days[day_key]["fat"] += jd.get("fat", 0) or 0
+            days[day_key]["carbs"] += jd.get("carbs", 0) or 0
+            days[day_key]["fiber"] += jd.get("fiber", 0) or 0
+            desc = jd.get("description") or (m.get("raw_text") or "")[:40]
+            days[day_key]["meals"].append(desc)
+
+        lines = []
+        total_days = len(days)
+        sum_cal = sum_prot = sum_fat = sum_carbs = sum_fiber = 0
+        for day, d in sorted(days.items()):
+            lines.append(f"  {day}: {d['cal']} ккал (Б:{d['prot']} Ж:{d['fat']} У:{d['carbs']} Кл:{d['fiber']}) — {', '.join(d['meals'][:5])}")
+            sum_cal += d["cal"]
+            sum_prot += d["prot"]
+            sum_fat += d["fat"]
+            sum_carbs += d["carbs"]
+            sum_fiber += d["fiber"]
+
+        avg_cal = sum_cal // max(total_days, 1)
+        avg_prot = sum_prot // max(total_days, 1)
+        avg_fat = sum_fat // max(total_days, 1)
+        avg_carbs = sum_carbs // max(total_days, 1)
+        avg_fiber = sum_fiber // max(total_days, 1)
+
+        header = f"📊 РАЦИОН ЗА НЕДЕЛЮ ({total_days} дней, {len(week_meals)} приёмов):"
+        footer = f"СРЕДНЕЕ В ДЕНЬ (неделя): {avg_cal} ккал, Б:{avg_prot} Ж:{avg_fat} У:{avg_carbs} Кл:{avg_fiber}"
+        parts.append(header + "\n" + "\n".join(lines) + "\n" + footer)
+
+    # --- Месячная сводка (агрегация по неделям) ---
+    if older_meals:
+        weeks: dict[str, dict] = defaultdict(lambda: {"cal": 0, "prot": 0, "fat": 0, "carbs": 0, "count": 0, "days": set()})
+        for m in older_meals:
+            jd = m.get("json_data") or {}
+            ts = m.get("timestamp")
+            if ts and hasattr(ts, "isocalendar"):
+                iso = ts.isocalendar()
+                week_key = f"Нед {iso.week}"
+            else:
+                week_key = "?"
+            weeks[week_key]["cal"] += jd.get("calories", 0) or 0
+            weeks[week_key]["prot"] += jd.get("protein", 0) or 0
+            weeks[week_key]["fat"] += jd.get("fat", 0) or 0
+            weeks[week_key]["carbs"] += jd.get("carbs", 0) or 0
+            weeks[week_key]["count"] += 1
+            if ts and hasattr(ts, "date"):
+                weeks[week_key]["days"].add(ts.date())
+
+        week_lines = []
+        for wk, w in sorted(weeks.items()):
+            n_days = max(len(w["days"]), 1)
+            week_lines.append(
+                f"  {wk}: ~{w['cal'] // n_days} ккал/день "
+                f"(Б:{w['prot'] // n_days} Ж:{w['fat'] // n_days} У:{w['carbs'] // n_days}), "
+                f"{w['count']} приёмов за {n_days} дн."
+            )
+        parts.append("📅 ТРЕНД ЗА МЕСЯЦ (предыдущие недели):\n" + "\n".join(week_lines))
+
+    # --- Общая статистика ---
+    total_meals_count = len(meals)
+    all_days = set()
+    total_cal = 0
     for m in meals:
         jd = m.get("json_data") or {}
-        day_key = m["timestamp"].strftime("%d.%m") if hasattr(m.get("timestamp", ""), "strftime") else "?"
-        days[day_key]["cal"] += jd.get("calories", 0) or 0
-        days[day_key]["prot"] += jd.get("protein", 0) or 0
-        days[day_key]["fat"] += jd.get("fat", 0) or 0
-        days[day_key]["carbs"] += jd.get("carbs", 0) or 0
-        days[day_key]["fiber"] += jd.get("fiber", 0) or 0
-        desc = jd.get("description") or (m.get("raw_text") or "")[:40]
-        days[day_key]["meals"].append(desc)
+        total_cal += jd.get("calories", 0) or 0
+        ts = m.get("timestamp")
+        if ts and hasattr(ts, "date"):
+            all_days.add(ts.date())
+    n_all_days = max(len(all_days), 1)
+    parts.append(f"📈 ИТОГО ЗА 30 ДНЕЙ: {total_meals_count} приёмов за {n_all_days} дн., среднее {total_cal // n_all_days} ккал/день")
 
-    lines = []
-    total_days = len(days)
-    sum_cal = sum_prot = sum_fat = sum_carbs = sum_fiber = 0
-    for day, d in sorted(days.items()):
-        lines.append(f"  {day}: {d['cal']} ккал (Б:{d['prot']} Ж:{d['fat']} У:{d['carbs']} Кл:{d['fiber']}) — {', '.join(d['meals'][:5])}")
-        sum_cal += d["cal"]
-        sum_prot += d["prot"]
-        sum_fat += d["fat"]
-        sum_carbs += d["carbs"]
-        sum_fiber += d["fiber"]
-
-    avg_cal = sum_cal // max(total_days, 1)
-    avg_prot = sum_prot // max(total_days, 1)
-    avg_fat = sum_fat // max(total_days, 1)
-    avg_carbs = sum_carbs // max(total_days, 1)
-    avg_fiber = sum_fiber // max(total_days, 1)
-
-    header = f"📊 РАЦИОН ЗА НЕДЕЛЮ ({total_days} дней, {len(meals)} приёмов):"
-    footer = f"СРЕДНЕЕ В ДЕНЬ: {avg_cal} ккал, Б:{avg_prot} Ж:{avg_fat} У:{avg_carbs} Кл:{avg_fiber}"
-    return header + "\n" + "\n".join(lines) + "\n" + footer
+    return "\n\n".join(parts)
 
 
 async def _today_workouts_context(user_id: int) -> str:
