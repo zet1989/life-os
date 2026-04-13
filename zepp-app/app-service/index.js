@@ -1,16 +1,18 @@
 /**
- * Life OS Sync — Background App Service (Zepp OS)
+ * Life OS Sync — Background App Service (Zepp OS 4.x)
  *
- * Периодически собирает метрики здоровья с датчиков.
- * Отправляет данные через ZML messaging → Side Service → fetch (серверу).
- * Если messaging недоступен, сохраняет в LocalStorage для отправки при открытии Page.
+ * Периодически собирает метрики здоровья с датчиков и сохраняет в localStorage.
+ * Данные отправляются на сервер при открытии Page (через ZML BLE → Side Service → fetch).
+ *
+ * ОГРАНИЧЕНИЕ Zepp OS: AppService в режиме Single Execution (setAlarm) имеет
+ * лимит 600мс. Сетевые запросы (async BLE messaging) НЕ могут завершиться за это время.
+ * Поэтому AppService ТОЛЬКО собирает данные, а Page отправляет.
  */
 
 import { HeartRate, Step, Calorie, Distance, Sleep, BloodOxygen, Stress, FatBurning, Stand, BodyTemperature, Pai, Workout } from '@zos/sensor';
 import { LocalStorage } from '@zos/storage';
 import { set as setAlarm } from '@zos/alarm';
-import { getApp } from '@zos/app';
-import { INTERVAL_MINUTES, API_KEY, SERVER_URL } from '../config';
+import { INTERVAL_MINUTES } from '../config';
 
 const localStorage = new LocalStorage();
 
@@ -86,7 +88,6 @@ function collectHealthData() {
         start_time: info.startTime,
         end_time: info.endTime,
       };
-      // Получаем фазы (REM, light, awake)
       try {
         const stageConst = sl.getStageConstantObj();
         const stages = sl.getStage();
@@ -103,7 +104,6 @@ function collectHealthData() {
           sleep.awake_min = awake;
         }
       } catch (e) {}
-      // Дневной сон
       try {
         const naps = sl.getNap();
         if (naps && naps.length > 0) {
@@ -152,72 +152,41 @@ function collectHealthData() {
   return data;
 }
 
-function trySendViaMessaging(data) {
-  try {
-    const app = getApp();
-    const messaging = app && app._options && app._options.globalData && app._options.globalData.messaging;
-    if (messaging && typeof messaging.request === 'function') {
-      messaging.request({
-        method: 'push_health_data',
-        params: { data, api_key: API_KEY, server_url: SERVER_URL },
-      })
-        .then(() => {
-          console.log('Life OS Service: sent via messaging OK');
-          localStorage.setItem('last_sync_status', 'ok');
-          localStorage.setItem('last_sync_time', Date.now().toString());
-          // Очищаем pending — данные отправлены
-          localStorage.removeItem('pending_data');
-          localStorage.removeItem('pending_keys');
-        })
-        .catch((err) => {
-          console.log('Life OS Service: messaging send failed', err);
-          savePending(data);
-        });
-      return true;
-    }
-  } catch (e) {
-    console.log('Life OS Service: messaging unavailable', e);
-  }
-  return false;
-}
-
-function savePending(data) {
-  const keys = Object.keys(data);
-  if (keys.length > 0) {
-    localStorage.setItem('pending_data', JSON.stringify(data));
-    localStorage.setItem('pending_keys', keys.join(','));
-    console.log('Life OS Service: saved to pending (will sync on page open)');
-  }
-}
-
 AppService({
   onInit() {
     const interval = parseInt(INTERVAL_MINUTES || '15');
 
-    const data = collectHealthData();
-    const keys = Object.keys(data);
-
-    if (keys.length > 0) {
-      console.log('Life OS Service: collected', keys.join(', '));
-      // Пробуем отправить через messaging (если App и ZML messaging доступны)
-      const sent = trySendViaMessaging(data);
-      if (!sent) {
-        // Fallback: сохраняем в localStorage для отправки при открытии Page
-        savePending(data);
-      }
-    } else {
-      console.log('Life OS Service: no data from sensors');
+    // ПЕРВЫМ делом ставим следующий alarm — даже если сбор данных упадёт, цепочка не разорвётся
+    try {
+      setAlarm({
+        delay: interval * 60,
+        url: 'app-service/index',
+      });
+    } catch (e) {
+      console.log('Life OS BG: alarm error', e);
     }
 
-    // Schedule next wake
-    setAlarm({
-      delay: interval * 60,
-      url: 'app-service/index.js',
-    });
-    console.log('Life OS Service: next in', interval, 'min');
+    // Собираем данные с датчиков
+    try {
+      const data = collectHealthData();
+      const keys = Object.keys(data);
+
+      if (keys.length > 0) {
+        // Сохраняем в pending — Page заберёт при открытии
+        localStorage.setItem('pending_data', JSON.stringify(data));
+        localStorage.setItem('pending_keys', keys.join(','));
+        localStorage.setItem('last_collect_time', Date.now().toString());
+        localStorage.setItem('collect_count',
+          (parseInt(localStorage.getItem('collect_count') || '0') + 1).toString()
+        );
+        console.log('Life OS BG: collected', keys.length, 'metrics');
+      } else {
+        console.log('Life OS BG: no sensor data');
+      }
+    } catch (e) {
+      console.log('Life OS BG: collect error', e);
+    }
   },
 
-  onDestroy() {
-    console.log('Life OS Sync: AppService stopped');
-  },
+  onDestroy() {},
 });

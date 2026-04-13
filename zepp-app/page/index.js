@@ -2,7 +2,8 @@
  * Life OS Sync — Status Page (Zepp OS 4.x)
  *
  * Экран приложения: статус синхронизации, кнопка «Синхр. сейчас».
- * Сбор данных с датчиков → отправка через Side Service (BLE → fetch).
+ * При открытии МГНОВЕННО отправляет pending данные из фонового сервиса,
+ * затем собирает свежие данные с датчиков → отправка через Side Service (BLE → fetch).
  */
 
 import { createWidget, widget, prop, align, text_style } from '@zos/ui';
@@ -19,6 +20,7 @@ const COLOR_PRIMARY = 0x179dde;
 const COLOR_SUCCESS = 0x00d68f;
 const COLOR_ERROR   = 0xff6b6b;
 const COLOR_MUTED   = 0x666666;
+const COLOR_WARN    = 0xffaa00;
 const W = 480;
 
 function collectHealthData() {
@@ -167,12 +169,14 @@ function formatTime(tsStr) {
 
 Page(
   BasePage({
-    state: { statusWidget: null, hintWidget: null, autoSyncTimer: null },
+    state: { statusWidget: null, hintWidget: null, collectWidget: null, autoSyncTimer: null },
 
     build() {
       const lastStatus = localStorage.getItem('last_sync_status') || 'none';
       const lastTime = localStorage.getItem('last_sync_time');
-      const lastKeys = localStorage.getItem('last_sync_keys') || '';
+      const lastCollect = localStorage.getItem('last_collect_time');
+      const collectCount = localStorage.getItem('collect_count') || '0';
+      const hasPending = !!localStorage.getItem('pending_data');
 
       let statusText = 'Ожидание';
       let statusColor = COLOR_MUTED;
@@ -187,35 +191,35 @@ Page(
 
       // Status
       this.state.statusWidget = createWidget(widget.TEXT, {
-        x: 0, y: px(80), w: W, h: px(40),
-        text: statusText, text_size: px(28), color: statusColor, align_h: align.CENTER_H,
+        x: 0, y: px(72), w: W, h: px(36),
+        text: statusText, text_size: px(26), color: statusColor, align_h: align.CENTER_H,
       });
 
-      // Last sync time
+      // Last sent time
       createWidget(widget.TEXT, {
-        x: 0, y: px(126), w: W, h: px(30),
-        text: 'Последняя: ' + formatTime(lastTime),
-        text_size: px(22), color: COLOR_MUTED, align_h: align.CENTER_H,
+        x: 0, y: px(114), w: W, h: px(28),
+        text: 'Отправлено: ' + formatTime(lastTime),
+        text_size: px(20), color: COLOR_MUTED, align_h: align.CENTER_H,
       });
 
-      // Metrics
-      createWidget(widget.TEXT, {
-        x: px(20), y: px(164), w: W - px(40), h: px(48),
-        text: lastKeys ? lastKeys.split(',').join(' · ') : '',
-        text_size: px(20), color: COLOR_MUTED, align_h: align.CENTER_H, text_style: text_style.WRAP,
+      // Last background collect time + count
+      this.state.collectWidget = createWidget(widget.TEXT, {
+        x: 0, y: px(146), w: W, h: px(28),
+        text: 'Фон: ' + formatTime(lastCollect) + (hasPending ? ' (ожидает отправки)' : '') + ' [' + collectCount + ']',
+        text_size: px(20), color: hasPending ? COLOR_WARN : COLOR_MUTED, align_h: align.CENTER_H,
       });
 
       // Interval
       createWidget(widget.TEXT, {
-        x: 0, y: px(220), w: W, h: px(30),
-        text: 'Интервал: ' + (INTERVAL_MINUTES || 15) + ' мин',
-        text_size: px(22), color: COLOR_MUTED, align_h: align.CENTER_H,
+        x: 0, y: px(180), w: W, h: px(28),
+        text: 'Интервал фона: ' + (INTERVAL_MINUTES || 15) + ' мин',
+        text_size: px(20), color: COLOR_MUTED, align_h: align.CENTER_H,
       });
 
       // Sync button
       const self = this;
       createWidget(widget.BUTTON, {
-        x: px(40), y: px(280), w: W - px(80), h: px(70),
+        x: px(40), y: px(230), w: W - px(80), h: px(70),
         text: 'Синхр. сейчас', text_size: px(26),
         normal_color: COLOR_PRIMARY, press_color: 0x0d6fa8,
         click_func: () => { self.syncNow(); },
@@ -223,22 +227,22 @@ Page(
 
       // Hint line
       this.state.hintWidget = createWidget(widget.TEXT, {
-        x: px(20), y: px(370), w: W - px(40), h: px(60),
+        x: px(20), y: px(320), w: W - px(40), h: px(80),
         text: '', text_size: px(20), color: COLOR_MUTED,
         align_h: align.CENTER_H, text_style: text_style.WRAP,
       });
 
-      // Авто-синхронизация каждые INTERVAL_MINUTES
+      // МГНОВЕННАЯ отправка pending данных (без задержки!)
+      this.flushPending();
+
+      // Свежая синхронизация через 3 секунды
+      setTimeout(() => { this.syncNow(); }, 3000);
+
+      // Повторная синхронизация пока приложение открыто
       const intervalMs = (INTERVAL_MINUTES || 15) * 60 * 1000;
       this.state.autoSyncTimer = setInterval(() => {
         this.syncNow();
       }, intervalMs);
-
-      // Первая автосинхронизация через 10 секунд после запуска
-      setTimeout(() => { this.syncNow(); }, 10000);
-
-      // Отправить невыгруженные данные фонового сервиса (если есть)
-      setTimeout(() => { this.flushPending(); }, 12000);
     },
 
     onDestroy() {
@@ -257,7 +261,7 @@ Page(
       const keys = Object.keys(pending);
       if (keys.length === 0) return;
 
-      this.setHint('Фоновые данные: ' + keys.length + ' метрик...');
+      this.setHint('Отправка фоновых данных (' + keys.length + ')...');
       this.httpRequest({
         method: 'post',
         url: SERVER_URL,
@@ -270,10 +274,20 @@ Page(
         .then(() => {
           localStorage.removeItem('pending_data');
           localStorage.removeItem('pending_keys');
+          localStorage.setItem('last_sync_status', 'ok');
+          localStorage.setItem('last_sync_time', Date.now().toString());
+          localStorage.setItem('collect_count', '0');
+          this.state.statusWidget.setProperty(prop.MORE, { text: '✓ Фон OK', color: COLOR_SUCCESS });
+          if (this.state.collectWidget) {
+            this.state.collectWidget.setProperty(prop.MORE, {
+              text: 'Фон: ' + formatTime(Date.now().toString()) + ' [0]',
+              color: COLOR_MUTED,
+            });
+          }
           this.setHint('Фоновые данные отправлены ✓');
         })
         .catch((err) => {
-          this.setHint('Фон. данные: ошибка ' + String(err).slice(0, 40));
+          this.setHint('Фон: ошибка ' + String(err).slice(0, 60));
         });
     },
 
@@ -301,8 +315,9 @@ Page(
           localStorage.setItem('last_sync_status', 'ok');
           localStorage.setItem('last_sync_time', Date.now().toString());
           localStorage.setItem('last_sync_keys', keys.join(','));
+          localStorage.setItem('collect_count', '0');
           this.state.statusWidget.setProperty(prop.MORE, { text: '✓ OK', color: COLOR_SUCCESS });
-          this.setHint(keys.join(' · '));
+          this.setHint(keys.length + ' метрик: ' + keys.join(', '));
         })
         .catch((err) => {
           localStorage.setItem('last_sync_status', 'error');

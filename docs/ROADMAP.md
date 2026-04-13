@@ -109,7 +109,9 @@
   - Код: `zepp-app/` — фоновый AppService + UI статуса + кнопка ручной синхр
   - Инструкция: `zepp-app/README.md` (8 шагов: регистрация, настройка, сборка, установка)
   - Осталось: пользователю нужно заполнить свой AppID + deviceSource из developer.zepp.com
-- [x] Фоновая отправка данных часов: AppService → ZML messaging → Side Service → fetch (+ fallback через localStorage при открытии Page)
+- [x] Фоновая отправка данных часов: AppService собирает каждые 15 мин → localStorage. Page отправляет при открытии (Zepp OS ограничение: true background sync невозможен)
+- [x] watch_context() — общий модуль `src/core/watch.py`, используется в Health + Psychology
+- [x] Время засыпания/пробуждения (start_time/end_time) сохраняется сервером
 - [ ] Настраиваемый интервал push (15/30/60 мин) через бота
 
 ### Инфраструктура

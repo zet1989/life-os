@@ -33,6 +33,18 @@ logger = structlog.get_logger()
 MSK = ZoneInfo("Europe/Moscow")
 
 
+def _minutes_to_hhmm(val: Any) -> str | None:
+    """Конвертировать минуты от полуночи в HH:MM. Возвращает None если невалидно."""
+    try:
+        m = int(val)
+    except (TypeError, ValueError):
+        return None
+    if m < 0:
+        return None
+    h = (m // 60) % 24
+    return f"{h:02d}:{m % 60:02d}"
+
+
 def generate_watch_api_key() -> str:
     """Сгенерировать API-ключ для авторизации push-запросов с часов."""
     return f"wk_{secrets.token_urlsafe(32)}"
@@ -117,9 +129,11 @@ async def process_watch_push(user_id: int, payload: dict[str, Any]) -> dict:
             if sl.get("score"):
                 data["sleep"]["score"] = int(sl["score"])
             if sl.get("start_time"):
-                data["sleep"]["start_time"] = str(sl["start_time"])
+                t = _minutes_to_hhmm(sl["start_time"])
+                data["sleep"]["start_time"] = t or str(sl["start_time"])
             if sl.get("end_time"):
-                data["sleep"]["end_time"] = str(sl["end_time"])
+                t = _minutes_to_hhmm(sl["end_time"])
+                data["sleep"]["end_time"] = t or str(sl["end_time"])
             if sl.get("nap_min"):
                 data["sleep"]["nap_min"] = round(float(sl["nap_min"]))
             total = data["sleep"]["deep_min"] + data["sleep"]["rem_min"] + data["sleep"]["light_min"]
