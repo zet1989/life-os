@@ -294,6 +294,7 @@ async def cmd_start(message: Message, db_user: dict) -> None:
         f"Привет, {name}! 👋\n"
         f"Я твой AI-нутрициолог, тренер и доктор.\n\n"
         f"🍽 Еда — фото или текст → КБЖУ + советы\n"
+        f"💬 Консультация — вопросы по питанию, анализ рациона\n"
         f"🏋️ Тренировка — лог и анализ\n"
         f"🩺 Доктор — медицинские вопросы\n"
         f"📋 Мой профиль — расскажи о себе",
@@ -357,6 +358,21 @@ async def mode_doctor(message: Message) -> None:
         "Опиши симптомы, задай вопрос о здоровье,\n"
         "пришли результаты анализов (фото или текст).\n\n"
         "💊 Учитываю твой профиль, болезни и питание.",
+        reply_markup=main_keyboard(),
+    )
+
+
+@router.message(F.text == "💬 Консультация")
+async def mode_consult(message: Message) -> None:
+    set_user_mode(message.from_user.id, Mode.CONSULT)  # type: ignore[union-attr]
+    await message.answer(
+        "💬 Режим <b>Консультация нутрициолога</b>.\n\n"
+        "Задай любой вопрос о питании, добавках, витаминах.\n"
+        "Я вижу твой рацион за 30 дней и дам конкретный ответ.\n\n"
+        "Примеры:\n"
+        "• <i>Оцени мое питание за неделю</i>\n"
+        "• <i>Какие витамины мне нужны?</i>\n"
+        "• <i>Можно ли совмещать магний и цинк?</i>",
         reply_markup=main_keyboard(),
     )
 
@@ -819,6 +835,8 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
         await _process_workout(message, user_id, text)
     elif mode == Mode.DOCTOR:
         await _process_doctor(message, user_id, text)
+    elif mode == Mode.CONSULT:
+        await _process_consult(message, user_id, text)
     elif mode == Mode.PROFILE:
         await _process_profile(message, user_id, text)
     elif mode == Mode.WATER:
@@ -958,6 +976,8 @@ async def handle_text(message: Message, db_user: dict) -> None:
         await _process_workout(message, user_id, text)
     elif mode == Mode.DOCTOR:
         await _process_doctor(message, user_id, text)
+    elif mode == Mode.CONSULT:
+        await _process_consult(message, user_id, text)
     elif mode == Mode.PROFILE:
         await _process_profile(message, user_id, text)
     elif mode == Mode.WATER:
@@ -994,22 +1014,18 @@ async def _process_water_text(message: Message, user_id: int, text: str) -> None
         reply_markup=main_keyboard(),
     )
 
-async def _process_food_text(message: Message, user_id: int, text: str) -> None:
-    """Обработка текстового описания еды — STATELESS."""
-    question = _is_question(text)
-    # Параллельные DB-запросы для ускорения
+async def _process_consult(message: Message, user_id: int, text: str) -> None:
+    """Режим Консультация — всегда 30-дневный контекст, nutrition_consult модель."""
     gather_tasks = [
         _today_meals_context(user_id),
         _get_user_settings(user_id),
         _medications_context(user_id),
         _watch_context(user_id),
         _is_wife(user_id),
+        _weekly_meals_context(user_id),
     ]
-    if question:
-        gather_tasks.append(_weekly_meals_context(user_id))
     results = await asyncio.gather(*gather_tasks)
-    meals_ctx, settings, meds_ctx, watch_ctx, is_wife = results[:5]
-    weekly_ctx = results[5] if question else ""
+    meals_ctx, settings, meds_ctx, watch_ctx, is_wife, weekly_ctx = results
 
     prompt_template = WIFE_NUTRITIONIST_SYSTEM if is_wife else NUTRITIONIST_SYSTEM
     system = prompt_template.format(
@@ -1023,15 +1039,48 @@ async def _process_food_text(message: Message, user_id: int, text: str) -> None:
         system += f"\n\n{watch_ctx}"
     if weekly_ctx:
         system += f"\n\n{weekly_ctx}"
+
+    messages = [{"role": "system", "content": system}]
+    history = await get_today_messages(user_id, BOT_SOURCE, limit=6)
+    messages.extend(history)
+    messages.append({"role": "user", "content": text})
+    await save_message(user_id, BOT_SOURCE, "user", text)
+
+    result = await chat(messages=messages, task_type="nutrition_consult", user_id=user_id, bot_source=BOT_SOURCE)
+    await safe_answer(message, result, reply_markup=main_keyboard())
+    await save_assistant_reply(user_id, BOT_SOURCE, result)
+
+
+async def _process_food_text(message: Message, user_id: int, text: str) -> None:
+    """Обработка текстового описания еды — STATELESS."""
+    # Параллельные DB-запросы для ускорения
+    gather_tasks = [
+        _today_meals_context(user_id),
+        _get_user_settings(user_id),
+        _medications_context(user_id),
+        _watch_context(user_id),
+        _is_wife(user_id),
+    ]
+    results = await asyncio.gather(*gather_tasks)
+    meals_ctx, settings, meds_ctx, watch_ctx, is_wife = results
+
+    prompt_template = WIFE_NUTRITIONIST_SYSTEM if is_wife else NUTRITIONIST_SYSTEM
+    system = prompt_template.format(
+        current_time=_now_str(),
+        today_meals_context=meals_ctx,
+        user_settings=settings,
+    )
+    if meds_ctx:
+        system += f"\n\n{meds_ctx}"
+    if watch_ctx:
+        system += f"\n\n{watch_ctx}"
     # Короткая история — для связного диалога без раздувания токенов
     messages = [{"role": "system", "content": system}]
     history = await get_today_messages(user_id, BOT_SOURCE, limit=4)
     messages.extend(history)
     messages.append({"role": "user", "content": text})
     await save_message(user_id, BOT_SOURCE, "user", text)
-    # Вопросы/советы → gpt-4o (умнее), логирование еды → gpt-4o-mini (дешевле)
-    task = "nutrition_consult" if question else "meal_photo"
-    result = await chat(messages=messages, task_type=task, user_id=user_id, bot_source=BOT_SOURCE)
+    result = await chat(messages=messages, task_type="meal_photo", user_id=user_id, bot_source=BOT_SOURCE)
 
     json_data = _extract_json(result)
 

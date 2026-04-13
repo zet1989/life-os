@@ -12,6 +12,7 @@ class Mode(StrEnum):
     FOOD = "food"
     WORKOUT = "workout"
     DOCTOR = "doctor"
+    CONSULT = "consult"
     PROFILE = "profile"
     WATER = "water"
     WEIGHT = "weight"
@@ -21,10 +22,11 @@ class Mode(StrEnum):
 def main_keyboard() -> ReplyKeyboardMarkup:
     """Основная Reply-клавиатура бота Health."""
     rows = [
-        [KeyboardButton(text="🍽 Еда"), KeyboardButton(text="🏋️ Тренировка")],
+        [KeyboardButton(text="🍽 Еда"), KeyboardButton(text="💬 Консультация")],
+        [KeyboardButton(text="🏋️ Тренировка"), KeyboardButton(text="🩺 Доктор")],
         [KeyboardButton(text="💧 Вода"), KeyboardButton(text="⚖️ Вес")],
-        [KeyboardButton(text="🩺 Доктор"), KeyboardButton(text="⌚ Часы")],
-        [KeyboardButton(text="� Лекарства"), KeyboardButton(text="�📋 Мой профиль")],
+        [KeyboardButton(text="⌚ Часы"), KeyboardButton(text="💊 Лекарства")],
+        [KeyboardButton(text="📋 Мой профиль")],
     ]
     from src.bots.hub.keyboard import is_unified, MENU_BUTTON_TEXT
     if is_unified():
