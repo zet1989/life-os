@@ -128,17 +128,19 @@ async def api_tasks_today(request: web.Request) -> web.Response:
     if not user_id:
         return _auth_error_response(request)
 
-    from src.db.queries import get_today_tasks_ext, get_overdue_tasks, get_tomorrow_tasks, get_today_focus
+    from src.db.queries import get_today_tasks_ext, get_overdue_tasks, get_tomorrow_tasks, get_today_focus, get_inbox_tasks
 
     today = await get_today_tasks_ext(user_id)
     overdue = await get_overdue_tasks(user_id)
     tomorrow = await get_tomorrow_tasks(user_id)
     focus = await get_today_focus(user_id)
+    inbox = await get_inbox_tasks(user_id)
 
     return _json_response({
         "tasks": [dict(t) for t in today],
         "overdue": [dict(t) for t in overdue],
         "tomorrow": [dict(t) for t in tomorrow],
+        "inbox": [dict(t) for t in inbox],
         "focus": dict(focus) if focus else None,
     })
 

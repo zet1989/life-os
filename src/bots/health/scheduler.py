@@ -328,15 +328,6 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # Amazfit Watch — проверка что часы отправляют данные (push-модель)
-    scheduler.add_job(
-        check_watch_stale,
-        trigger=CronTrigger(hour="9,13,18", minute=0, timezone=MSK),
-        args=[bot],
-        id="watch_stale_check",
-        replace_existing=True,
-    )
-
     return scheduler
 
 
@@ -383,30 +374,3 @@ async def _check_medications_for_user(bot: Bot, user_id: int, current_time: str)
                 await safe_send(bot, user_id, text, reply_markup=kb)
     except Exception:
         logger.exception("medication_check_failed", user_id=user_id)
-
-
-# === Amazfit Watch — проверка push-данных ===
-
-async def check_watch_stale(bot: Bot) -> None:
-    """Проверить, что часы отправляют данные. Алерт если push давно не приходил."""
-    from src.db.queries import get_all_watch_users
-
-    try:
-        users = await get_all_watch_users()
-        now = datetime.now(MSK)
-        for wt in users:
-            last_push = wt.get("last_push_at")
-            if not last_push:
-                continue
-            # Если push не приходил больше 2 часов — напомнить
-            if hasattr(last_push, "timestamp"):
-                hours_ago = (now.timestamp() - last_push.timestamp()) / 3600
-                if hours_ago > 2:
-                    await safe_send(
-                        bot,
-                        wt["user_id"],
-                        f"⌚ Данные с часов не обновлялись {int(hours_ago)} ч.\n"
-                        "Проверь, что Amazfit Balance 2 подключены и мини-приложение активно.",
-                    )
-    except Exception:
-        logger.exception("watch_stale_check_failed")

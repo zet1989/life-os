@@ -66,5 +66,8 @@ class Settings(BaseSettings):
     # --- Free model limits ---
     free_model_daily_limit: int = 950  # запросов бесплатных моделей в день (с запасом от 1000 при $10+)
 
+    # --- Todoist ---
+    todoist_api_token: str = ""  # Personal API token из Settings → Integrations → Developer
+
 
 settings = Settings()  # type: ignore[call-arg]

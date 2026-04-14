@@ -37,6 +37,7 @@ from src.db.queries import (
     get_all_tags,
     get_cross_bot_summary,
     get_finance_summary,
+    get_inbox_tasks,
     get_kanban_tasks,
     get_obsidian_today_tasks,
     get_overdue_tasks,
@@ -453,12 +454,17 @@ async def _show_today_tasks(message: Message, user_id: int, edit: bool = False) 
     overdue = await get_overdue_tasks(user_id)
     obs_tasks = await get_obsidian_today_tasks(user_id)
     focus = await get_today_focus(user_id)
+    inbox = await get_inbox_tasks(user_id)
 
     text = f"📋 <b>Задачи на {today}</b>\n\n"
 
     # Фокус дня
     if focus:
         text += f"🎯 Фокус: <b>{focus.get('raw_text', '')}</b>\n\n"
+
+    # Inbox badge
+    if inbox:
+        text += f"📥 <b>Inbox: {len(inbox)}</b> нераспределённых мыслей → /inbox\n\n"
 
     if not tasks and not overdue and not obs_tasks:
         text += "Задач на сегодня нет. Добавь через ➕ или напиши текст.\n"
@@ -833,6 +839,351 @@ async def cb_sub_undo(callback: CallbackQuery) -> None:
     await callback.answer("↩️")
     callback.data = f"subtasks:{parent_id}"  # type: ignore[assignment]
     await cb_show_subtasks(callback)
+
+
+# === 📥 GTD Inbox — быстрый захват мыслей ===
+
+@router.message(F.text == "📥 Inbox")
+async def mode_inbox(message: Message, db_user: dict) -> None:
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    set_user_mode(user_id, Mode.INBOX)
+    await _show_inbox(message, user_id)
+
+
+@router.message(Command("inbox"))
+async def cmd_inbox(message: Message, db_user: dict) -> None:
+    """/inbox [текст] — показать inbox или быстро записать мысль."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/inbox", "", 1).strip()
+
+    if args:
+        # Быстрый захват: сразу записываем без парсинга
+        await _inbox_capture(message, user_id, args)
+    else:
+        set_user_mode(user_id, Mode.INBOX)
+        await _show_inbox(message, user_id)
+
+
+@router.message(Command("i"))
+async def cmd_i(message: Message, db_user: dict) -> None:
+    """/i <текст> — ультра-быстрый захват мысли в inbox."""
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    args = (message.text or "").replace("/i", "", 1).strip()
+
+    if not args:
+        await message.answer("Использование: <code>/i купить молоко</code>")
+        return
+
+    await _inbox_capture(message, user_id, args)
+
+
+async def _inbox_capture(message: Message, user_id: int, text: str) -> None:
+    """Мгновенный захват мысли в Inbox — без даты, без LLM, без задержки."""
+    task = await create_task(
+        user_id=user_id,
+        task_text=text[:500],
+        due_date=None,
+        priority="normal",
+        source="inbox",
+    )
+    inbox_count = len(await get_inbox_tasks(user_id))
+    await message.answer(
+        f"📥 <b>Записано:</b> {text[:200]}\n"
+        f"<i>В Inbox: {inbox_count} мысл{'ь' if inbox_count == 1 else 'ей'}</i>",
+        reply_markup=main_keyboard(),
+    )
+
+
+async def _show_inbox(message: Message, user_id: int, edit: bool = False) -> None:
+    """Показать все задачи в Inbox (без даты)."""
+    tasks = await get_inbox_tasks(user_id)
+
+    text = "📥 <b>Inbox</b> — нераспределённые мысли\n\n"
+
+    if not tasks:
+        text += (
+            "Inbox пуст — все мысли разобраны! ✨\n\n"
+            "Быстрый захват:\n"
+            "<code>/i купить молоко</code>\n"
+            "<code>/inbox позвонить маме</code>\n"
+            "Или нажми 📥 Inbox и просто напиши текст."
+        )
+        if edit:
+            await safe_edit(message, text)
+        else:
+            await safe_answer(message, text, reply_markup=main_keyboard())
+        return
+
+    text += f"<b>{len(tasks)}</b> мыслей ждут разбора:\n\n"
+    for i, t in enumerate(tasks, 1):
+        created = t["created_at"]
+        if hasattr(created, "strftime"):
+            ts = created.strftime("%d.%m %H:%M")
+        else:
+            ts = ""
+        text += f"{i}. {t['task_text'][:60]} <i>({ts})</i>\n"
+
+    text += "\n<i>Разбери: назначь дату, удали или оставь.</i>"
+
+    buttons = []
+    for t in tasks[:10]:
+        row = [
+            InlineKeyboardButton(
+                text=f"📅 {t['task_text'][:20]}",
+                callback_data=f"inb_plan:{t['id']}",
+            ),
+            InlineKeyboardButton(
+                text="✅",
+                callback_data=f"inb_done:{t['id']}",
+            ),
+            InlineKeyboardButton(
+                text="🗑",
+                callback_data=f"inb_del:{t['id']}",
+            ),
+        ]
+        buttons.append(row)
+
+    buttons.append([
+        InlineKeyboardButton(text="📅 Все→сегодня", callback_data="inb_all_today"),
+        InlineKeyboardButton(text="📅 Все→завтра", callback_data="inb_all_tomorrow"),
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    if edit:
+        await safe_edit(message, text, reply_markup=keyboard)
+    else:
+        await safe_answer(message, text, reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("inb_plan:"))
+async def cb_inbox_plan(callback: CallbackQuery) -> None:
+    """Показать варианты планирования для задачи из inbox."""
+    user_id = callback.from_user.id
+    task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    task = await get_task_by_id(task_id, user_id)
+    if not task:
+        await callback.answer("Задача не найдена")
+        return
+
+    today = datetime.now(MSK).strftime("%Y-%m-%d")
+    tomorrow = (datetime.now(MSK) + timedelta(days=1)).strftime("%Y-%m-%d")
+    next_monday = (datetime.now(MSK) + timedelta(days=(7 - datetime.now(MSK).weekday()))).strftime("%Y-%m-%d")
+
+    buttons = [
+        [
+            InlineKeyboardButton(text="📅 Сегодня", callback_data=f"inb_sched:{task_id}:{today}"),
+            InlineKeyboardButton(text="📅 Завтра", callback_data=f"inb_sched:{task_id}:{tomorrow}"),
+        ],
+        [
+            InlineKeyboardButton(text="📅 Пн (след.)", callback_data=f"inb_sched:{task_id}:{next_monday}"),
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"inb_del:{task_id}"),
+        ],
+        [InlineKeyboardButton(text="◀ Назад к Inbox", callback_data="inb_back")],
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await callback.answer()
+    await safe_edit(
+        callback.message,
+        f"📥 <b>Планирование:</b>\n\n{task['task_text']}\n\nКуда перенести?",
+        reply_markup=keyboard,
+    )
+
+
+@router.callback_query(F.data.startswith("inb_sched:"))
+async def cb_inbox_schedule(callback: CallbackQuery) -> None:
+    """Назначить дату задаче из inbox."""
+    user_id = callback.from_user.id
+    parts = callback.data.split(":")  # type: ignore[union-attr]
+    task_id = int(parts[1])
+    new_date = parts[2]
+    await reschedule_task(task_id, user_id, new_date)
+    date_display = datetime.strptime(new_date, "%Y-%m-%d").strftime("%d.%m.%Y")
+    await callback.answer(f"📅 Запланировано на {date_display}")
+    await _show_inbox(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+@router.callback_query(F.data.startswith("inb_done:"))
+async def cb_inbox_done(callback: CallbackQuery) -> None:
+    """Отметить задачу из inbox выполненной."""
+    user_id = callback.from_user.id
+    task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    await complete_task(task_id, user_id)
+    await callback.answer("✅ Выполнено!")
+    await _show_inbox(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+@router.callback_query(F.data.startswith("inb_del:"))
+async def cb_inbox_delete(callback: CallbackQuery) -> None:
+    """Удалить задачу из inbox."""
+    user_id = callback.from_user.id
+    task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    await delete_task(task_id, user_id)
+    await callback.answer("🗑 Удалено")
+    await _show_inbox(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+@router.callback_query(F.data == "inb_all_today")
+async def cb_inbox_all_today(callback: CallbackQuery) -> None:
+    """Перенести все задачи из inbox на сегодня."""
+    user_id = callback.from_user.id
+    tasks = await get_inbox_tasks(user_id)
+    today = datetime.now(MSK).strftime("%Y-%m-%d")
+    for t in tasks:
+        await reschedule_task(t["id"], user_id, today)
+    await callback.answer(f"📅 {len(tasks)} задач → сегодня")
+    await _show_inbox(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+@router.callback_query(F.data == "inb_all_tomorrow")
+async def cb_inbox_all_tomorrow(callback: CallbackQuery) -> None:
+    """Перенести все задачи из inbox на завтра."""
+    user_id = callback.from_user.id
+    tasks = await get_inbox_tasks(user_id)
+    tomorrow = (datetime.now(MSK) + timedelta(days=1)).strftime("%Y-%m-%d")
+    for t in tasks:
+        await reschedule_task(t["id"], user_id, tomorrow)
+    await callback.answer(f"📅 {len(tasks)} задач → завтра")
+    await _show_inbox(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+@router.callback_query(F.data == "inb_back")
+async def cb_inbox_back(callback: CallbackQuery) -> None:
+    """Вернуться к списку inbox."""
+    user_id = callback.from_user.id
+    await callback.answer()
+    await _show_inbox(callback.message, user_id, edit=True)  # type: ignore[arg-type]
+
+
+# === /todoist — Todoist sync ===
+
+
+@router.message(Command("todoist"))
+async def cmd_todoist(message: Message, db_user: dict) -> None:
+    """Показать задачи из Todoist Inbox и действия синхронизации."""
+    from src.integrations.todoist import is_configured, get_inbox_tasks as todoist_inbox
+
+    if not is_configured():
+        await message.answer(
+            "⚠️ Todoist не настроен.\n\n"
+            "Добавь `TODOIST_API_TOKEN` в .env\n"
+            "(Settings → Integrations → Developer → API token)",
+        )
+        return
+
+    tasks = await todoist_inbox()
+    if not tasks:
+        await message.answer("✅ Todoist Inbox пуст — всё разобрано!")
+        return
+
+    text = f"📋 <b>Todoist Inbox</b> ({len(tasks)})\n\n"
+    buttons: list[list[InlineKeyboardButton]] = []
+    for i, t in enumerate(tasks[:20], 1):
+        content = t.get("content", "?")
+        tid = t.get("id", "")
+        prio = t.get("priority", 1)
+        prio_icon = {4: "🔴", 3: "🟠", 2: "🔵"}.get(prio, "")
+        text += f"{i}. {prio_icon}{content}\n"
+        buttons.append([
+            InlineKeyboardButton(text=f"📥 #{i} → Life OS", callback_data=f"td_imp:{tid}"),
+            InlineKeyboardButton(text=f"✅ #{i}", callback_data=f"td_done:{tid}"),
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="📥 Импорт всех → Life OS", callback_data="td_imp_all"),
+    ])
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@router.callback_query(F.data.startswith("td_imp:"))
+async def cb_todoist_import(callback: CallbackQuery) -> None:
+    """Импортировать одну задачу из Todoist в Life OS Inbox."""
+    from src.integrations.todoist import get_inbox_tasks as todoist_inbox, close_task as todoist_close
+
+    user_id = callback.from_user.id
+    todoist_id = callback.data.split(":", 1)[1]  # type: ignore[union-attr]
+
+    tasks = await todoist_inbox()
+    task = next((t for t in tasks if t.get("id") == todoist_id), None)
+    if not task:
+        await callback.answer("Задача не найдена в Todoist", show_alert=True)
+        return
+
+    content = task.get("content", "?")
+    await create_task(user_id=user_id, task_text=content, source="todoist")
+    await todoist_close(todoist_id)
+    await callback.answer(f"📥 «{content[:30]}» → Life OS")
+
+    # Обновить список
+    remaining = await todoist_inbox()
+    if not remaining:
+        await safe_edit(callback.message, "✅ Todoist Inbox пуст — всё импортировано!")
+    else:
+        await _show_todoist_list(callback.message, remaining, edit=True)
+
+
+@router.callback_query(F.data == "td_imp_all")
+async def cb_todoist_import_all(callback: CallbackQuery) -> None:
+    """Импортировать все задачи из Todoist Inbox в Life OS."""
+    from src.integrations.todoist import get_inbox_tasks as todoist_inbox, close_task as todoist_close
+
+    user_id = callback.from_user.id
+    tasks = await todoist_inbox()
+    if not tasks:
+        await callback.answer("Inbox уже пуст")
+        return
+
+    count = 0
+    for t in tasks:
+        content = t.get("content", "?")
+        tid = t.get("id", "")
+        await create_task(user_id=user_id, task_text=content, source="todoist")
+        await todoist_close(tid)
+        count += 1
+
+    await callback.answer(f"📥 {count} задач импортировано")
+    await safe_edit(callback.message, f"✅ Импортировано {count} задач из Todoist → Life OS Inbox")
+
+
+@router.callback_query(F.data.startswith("td_done:"))
+async def cb_todoist_done(callback: CallbackQuery) -> None:
+    """Завершить задачу в Todoist без импорта."""
+    from src.integrations.todoist import close_task as todoist_close, get_inbox_tasks as todoist_inbox
+
+    todoist_id = callback.data.split(":", 1)[1]  # type: ignore[union-attr]
+    ok = await todoist_close(todoist_id)
+    if not ok:
+        await callback.answer("Ошибка при завершении", show_alert=True)
+        return
+
+    await callback.answer("✅ Завершено в Todoist")
+    remaining = await todoist_inbox()
+    if not remaining:
+        await safe_edit(callback.message, "✅ Todoist Inbox пуст!")
+    else:
+        await _show_todoist_list(callback.message, remaining, edit=True)
+
+
+async def _show_todoist_list(message, tasks: list[dict], edit: bool = False) -> None:
+    """Отобразить список задач Todoist."""
+    text = f"📋 <b>Todoist Inbox</b> ({len(tasks)})\n\n"
+    buttons: list[list[InlineKeyboardButton]] = []
+    for i, t in enumerate(tasks[:20], 1):
+        content = t.get("content", "?")
+        tid = t.get("id", "")
+        prio = t.get("priority", 1)
+        prio_icon = {4: "🔴", 3: "🟠", 2: "🔵"}.get(prio, "")
+        text += f"{i}. {prio_icon}{content}\n"
+        buttons.append([
+            InlineKeyboardButton(text=f"📥 #{i} → Life OS", callback_data=f"td_imp:{tid}"),
+            InlineKeyboardButton(text=f"✅ #{i}", callback_data=f"td_done:{tid}"),
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="📥 Импорт всех → Life OS", callback_data="td_imp_all"),
+    ])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    if edit:
+        await safe_edit(message, text, reply_markup=kb)
+    else:
+        await message.answer(text, reply_markup=kb)
 
 
 # === /kanban — Kanban-доска ===
@@ -1956,6 +2307,11 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
         # Добавление задачи через текст
         set_user_mode(user_id, Mode.TASKS)
         await _parse_and_create_task(message, user_id, text)
+        return
+
+    if mode == Mode.INBOX:
+        # Быстрый захват в inbox — без LLM, без даты
+        await _inbox_capture(message, user_id, text)
         return
 
     if mode == Mode.FOCUS:

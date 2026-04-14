@@ -946,6 +946,23 @@ async def get_quarter_summary(user_id: int) -> dict:
     }
 
 
+async def get_inbox_tasks(user_id: int) -> list[dict]:
+    """Входящие: задачи без даты (GTD Inbox)."""
+    rows = await get_pool().fetch(
+        """SELECT t.*, p.name AS project_name, g.title AS goal_title
+           FROM tasks t
+           LEFT JOIN projects p ON t.project_id = p.project_id
+           LEFT JOIN goals g ON t.goal_id = g.id
+           WHERE t.user_id = $1
+             AND t.is_done = FALSE
+             AND t.due_date IS NULL
+             AND t.parent_task_id IS NULL
+           ORDER BY t.created_at DESC""",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_uncompleted_tasks_for_matrix(user_id: int) -> list[dict]:
     """Все незавершённые задачи пользователя (для матрицы Эйзенхауэра)."""
     rows = await get_pool().fetch(

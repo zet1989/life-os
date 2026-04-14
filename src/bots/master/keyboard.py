@@ -20,6 +20,7 @@ class Mode(str, Enum):
     SET_PROMPT = "set_prompt"  # ожидаем текст промпта для выбранного проекта
     TASKS = "tasks"
     ADD_TASK = "add_task"  # ожидаем текст новой задачи
+    INBOX = "inbox"  # быстрый захват мысли (GTD Inbox)
     FOCUS = "focus"  # фокус дня
 
 
@@ -48,7 +49,8 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     """Главная клавиатура Master-бота."""
     rows = [
         [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="📋 Задачи")],
-        [KeyboardButton(text="🎯 Фокус дня"), KeyboardButton(text="🎯 Цели и Мечты")],
+        [KeyboardButton(text="📥 Inbox"), KeyboardButton(text="🎯 Фокус дня")],
+        [KeyboardButton(text="🎯 Цели и Мечты")],
         [KeyboardButton(text="⚙️ Проекты"), KeyboardButton(text="📊 Сводный отчёт")],
         [KeyboardButton(text="💰 Финансовая панорама"), KeyboardButton(text="🤖 AI Панель")],
         [KeyboardButton(text="📋 Промпты"), KeyboardButton(text="➕ Цель")],

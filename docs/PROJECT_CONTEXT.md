@@ -403,6 +403,34 @@ API_MONTHLY_LIMIT_USD=20.0
 
 ## 12. Changelog (последние изменения)
 
+### 14 апреля 2026 — Todoist интеграция + очистка watch_stale
+
+- **Todoist:**
+  - `src/integrations/todoist.py` — новый модуль: async-клиент Todoist REST API v1 (Bearer token). Функции: `get_inbox_tasks()`, `create_task()`, `close_task()`, `get_projects()`, `get_user_info()`
+  - `src/config.py` — добавлен `todoist_api_token` (Personal API token, Settings → Integrations → Developer)
+  - `src/bots/master/handlers.py` — команда `/todoist`: просмотр Todoist Inbox, импорт задач в Life OS (по одной или все разом), завершение в Todoist. Callbacks: `td_imp:`, `td_done:`, `td_imp_all`
+- **Watch stale cleanup:**
+  - `src/bots/health/scheduler.py` — удалены функция `check_watch_stale()` и её регистрация в планировщике. Пользователь синхронизирует часы вручную раз в сутки.
+- **Файлы:** `src/integrations/todoist.py`, `src/config.py`, `src/bots/master/handlers.py`, `src/bots/health/scheduler.py`
+
+### 14 апреля 2026 — GTD Inbox: быстрый захват мыслей
+
+- **Проблема:** Нет быстрого способа записать мысль/идею без указания даты и проекта. При добавлении задач требуется парсинг через LLM (задержка).
+- **Решение:** Реализован GTD Inbox — система мгновенного захвата мыслей по методологии Getting Things Done (David Allen). Capture → Clarify → Organize.
+- **Изменения:**
+  - `src/db/queries.py` — добавлена функция `get_inbox_tasks()` (задачи без даты, не выполнены, без parent)
+  - `src/bots/master/keyboard.py` — добавлен `Mode.INBOX`, кнопка «📥 Inbox» в главную клавиатуру
+  - `src/bots/master/handlers.py` — полный набор inbox-хэндлеров:
+    - `/i <текст>` — ультра-быстрый захват (1 символ команды!)
+    - `/inbox [текст]` — показ inbox или захват
+    - Кнопка «📥 Inbox» — режим INBOX, любой текст = захват
+    - Разбор inbox: 📅 планирование (сегодня/завтра/пн), ✅ выполнено, 🗑 удалить
+    - Массовые операции: «Все→сегодня», «Все→завтра»
+    - Бэдж в задачах: «📥 Inbox: N нераспределённых мыслей → /inbox»
+  - `src/webapp/__init__.py` — inbox-задачи включены в API `/api/webapp/tasks`
+- **Принцип:** Без LLM, без даты, без приоритета, без проекта = мгновенная запись. Разбор потом в удобное время.
+- **Файлы:** `src/db/queries.py`, `src/bots/master/keyboard.py`, `src/bots/master/handlers.py`, `src/webapp/__init__.py`
+
 ### 13 апреля 2026 — Единая модель: DeepSeek V3.2 на все задачи
 
 - **Причина:** DeepSeek V3.2 (GPT-5 class) — $0.26/$0.38 за 1M токенов. Output на 37% дешевле gpt-4o-mini ($0.38 vs $0.60), при значительно лучшем качестве.
