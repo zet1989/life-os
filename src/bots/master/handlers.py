@@ -1103,7 +1103,8 @@ async def cb_todoist_import(callback: CallbackQuery) -> None:
         return
 
     content = task.get("content", "?")
-    await create_task(user_id=user_id, task_text=content, source="todoist")
+    due_date = (task.get("due") or {}).get("date")
+    await create_task(user_id=user_id, task_text=content, source="todoist", due_date=due_date)
     await mark_todoist_synced(todoist_id, user_id, imported=True)
     await todoist_close(todoist_id)
     await callback.answer(f"📥 «{content[:30]}» → Life OS")
@@ -1142,7 +1143,8 @@ async def cb_todoist_import_all(callback: CallbackQuery) -> None:
         tid = t.get("id", "")
         if not tid:
             continue
-        await create_task(user_id=user_id, task_text=content, source="todoist")
+        due_date = (t.get("due") or {}).get("date")
+        await create_task(user_id=user_id, task_text=content, source="todoist", due_date=due_date)
         await mark_todoist_synced(tid, user_id, imported=True)
         await todoist_close(tid)
         count += 1

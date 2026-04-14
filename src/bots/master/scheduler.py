@@ -386,7 +386,8 @@ async def sync_todoist_inbox(bot: Bot) -> None:
             content = t.get("content", "?")
             if not tid:
                 continue
-            await create_task(user_id=user_id, task_text=content, source="todoist")
+            due_date = (t.get("due") or {}).get("date")  # YYYY-MM-DD or None
+            await create_task(user_id=user_id, task_text=content, source="todoist", due_date=due_date)
             await mark_todoist_synced(tid, user_id, imported=True)
             imported_names.append(content)
 
