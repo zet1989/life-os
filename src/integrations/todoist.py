@@ -26,33 +26,18 @@ def is_configured() -> bool:
     return bool(settings.todoist_api_token)
 
 
-async def get_user_info() -> dict | None:
-    """Получить информацию о пользователе (в т.ч. inbox_project_id)."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{BASE_URL}/user", headers=_headers()) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                logger.warning("todoist_user_info_failed", status=resp.status)
-                return None
-    except Exception:
-        logger.exception("todoist_user_info_error")
-        return None
-
-
 async def get_inbox_project_id() -> str | None:
-    """Получить ID Inbox-проекта через Sync API (содержит inbox_project_id)."""
+    """Получить ID Inbox-проекта через список проектов (поле inbox_project=true)."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.todoist.com/api/v1/sync",
-                headers=_headers(),
-                data={"sync_token": "*", "resource_types": '["user"]'},
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data.get("user", {}).get("inbox_project_id")
-                return None
+        projects = await get_projects()
+        for p in projects:
+            if p.get("inbox_project"):
+                return p.get("id")
+        # fallback: проект с именем "Inbox"
+        for p in projects:
+            if p.get("name", "").lower() == "inbox":
+                return p.get("id")
+        return None
     except Exception:
         logger.exception("todoist_inbox_id_error")
         return None
