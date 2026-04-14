@@ -1833,3 +1833,25 @@ async def get_project_tasks(user_id: int, project_id: int) -> list[dict]:
         user_id, project_id,
     )
     return [dict(r) for r in rows]
+
+
+# === Todoist sync ===
+
+async def get_synced_todoist_ids(user_id: int) -> set[str]:
+    """Множество todoist_id, уже известных системе."""
+    rows = await get_pool().fetch(
+        "SELECT todoist_id FROM todoist_synced WHERE user_id = $1", user_id,
+    )
+    return {r["todoist_id"] for r in rows}
+
+
+async def mark_todoist_synced(
+    todoist_id: str, user_id: int, imported: bool = True,
+) -> None:
+    """Пометить задачу Todoist как обработанную."""
+    await get_pool().execute(
+        """INSERT INTO todoist_synced (todoist_id, user_id, imported)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (todoist_id) DO NOTHING""",
+        todoist_id, user_id, imported,
+    )

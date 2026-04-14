@@ -1061,6 +1061,7 @@ async def cb_inbox_back(callback: CallbackQuery) -> None:
 async def cmd_todoist(message: Message, db_user: dict) -> None:
     """Показать задачи из Todoist Inbox и действия синхронизации."""
     from src.integrations.todoist import is_configured, get_inbox_tasks as todoist_inbox
+    from src.db.queries import get_synced_todoist_ids
 
     if not is_configured():
         await message.answer(
@@ -1075,28 +1076,22 @@ async def cmd_todoist(message: Message, db_user: dict) -> None:
         await message.answer("✅ Todoist Inbox пуст — всё разобрано!")
         return
 
-    text = f"📋 <b>Todoist Inbox</b> ({len(tasks)})\n\n"
-    buttons: list[list[InlineKeyboardButton]] = []
-    for i, t in enumerate(tasks[:20], 1):
-        content = t.get("content", "?")
-        tid = t.get("id", "")
-        prio = t.get("priority", 1)
-        prio_icon = {4: "🔴", 3: "🟠", 2: "🔵"}.get(prio, "")
-        text += f"{i}. {prio_icon}{content}\n"
-        buttons.append([
-            InlineKeyboardButton(text=f"📥 #{i} → Life OS", callback_data=f"td_imp:{tid}"),
-            InlineKeyboardButton(text=f"✅ #{i}", callback_data=f"td_done:{tid}"),
-        ])
-    buttons.append([
-        InlineKeyboardButton(text="📥 Импорт всех → Life OS", callback_data="td_imp_all"),
-    ])
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    # Фильтруем уже импортированные
+    user_id = message.from_user.id  # type: ignore[union-attr]
+    synced = await get_synced_todoist_ids(user_id)
+    new_tasks = [t for t in tasks if t.get("id", "") not in synced]
+    if not new_tasks:
+        await message.answer("✅ Все задачи из Todoist уже импортированы!")
+        return
+
+    await _show_todoist_list(message, new_tasks)
 
 
 @router.callback_query(F.data.startswith("td_imp:"))
 async def cb_todoist_import(callback: CallbackQuery) -> None:
     """Импортировать одну задачу из Todoist в Life OS Inbox."""
     from src.integrations.todoist import get_inbox_tasks as todoist_inbox, close_task as todoist_close
+    from src.db.queries import mark_todoist_synced, get_synced_todoist_ids
 
     user_id = callback.from_user.id
     todoist_id = callback.data.split(":", 1)[1]  # type: ignore[union-attr]
@@ -1109,11 +1104,14 @@ async def cb_todoist_import(callback: CallbackQuery) -> None:
 
     content = task.get("content", "?")
     await create_task(user_id=user_id, task_text=content, source="todoist")
+    await mark_todoist_synced(todoist_id, user_id, imported=True)
     await todoist_close(todoist_id)
     await callback.answer(f"📥 «{content[:30]}» → Life OS")
 
-    # Обновить список
+    # Обновить список (показать только неимпортированные)
     remaining = await todoist_inbox()
+    synced = await get_synced_todoist_ids(user_id)
+    remaining = [t for t in remaining if t.get("id", "") not in synced]
     if not remaining:
         await safe_edit(callback.message, "✅ Todoist Inbox пуст — всё импортировано!")
     else:
@@ -1122,8 +1120,9 @@ async def cb_todoist_import(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "td_imp_all")
 async def cb_todoist_import_all(callback: CallbackQuery) -> None:
-    """Импортировать все задачи из Todoist Inbox в Life OS."""
+    """Импортировать все новые задачи из Todoist Inbox в Life OS."""
     from src.integrations.todoist import get_inbox_tasks as todoist_inbox, close_task as todoist_close
+    from src.db.queries import mark_todoist_synced, get_synced_todoist_ids
 
     user_id = callback.from_user.id
     tasks = await todoist_inbox()
@@ -1131,11 +1130,20 @@ async def cb_todoist_import_all(callback: CallbackQuery) -> None:
         await callback.answer("Inbox уже пуст")
         return
 
+    synced = await get_synced_todoist_ids(user_id)
+    new_tasks = [t for t in tasks if t.get("id", "") not in synced]
+    if not new_tasks:
+        await callback.answer("Все задачи уже импортированы")
+        return
+
     count = 0
-    for t in tasks:
+    for t in new_tasks:
         content = t.get("content", "?")
         tid = t.get("id", "")
+        if not tid:
+            continue
         await create_task(user_id=user_id, task_text=content, source="todoist")
+        await mark_todoist_synced(tid, user_id, imported=True)
         await todoist_close(tid)
         count += 1
 
@@ -1147,15 +1155,20 @@ async def cb_todoist_import_all(callback: CallbackQuery) -> None:
 async def cb_todoist_done(callback: CallbackQuery) -> None:
     """Завершить задачу в Todoist без импорта."""
     from src.integrations.todoist import close_task as todoist_close, get_inbox_tasks as todoist_inbox
+    from src.db.queries import mark_todoist_synced, get_synced_todoist_ids
 
+    user_id = callback.from_user.id
     todoist_id = callback.data.split(":", 1)[1]  # type: ignore[union-attr]
     ok = await todoist_close(todoist_id)
     if not ok:
         await callback.answer("Ошибка при завершении", show_alert=True)
         return
 
+    await mark_todoist_synced(todoist_id, user_id, imported=False)
     await callback.answer("✅ Завершено в Todoist")
     remaining = await todoist_inbox()
+    synced = await get_synced_todoist_ids(user_id)
+    remaining = [t for t in remaining if t.get("id", "") not in synced]
     if not remaining:
         await safe_edit(callback.message, "✅ Todoist Inbox пуст!")
     else:

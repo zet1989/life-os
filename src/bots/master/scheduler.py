@@ -25,6 +25,7 @@ MSK = ZoneInfo("Europe/Moscow")
 from src.ai.rag import search
 from src.ai.router import chat
 from src.db.queries import (
+    create_task,
     get_active_goals,
     get_admin_users,
     get_completed_today_count,
@@ -34,6 +35,7 @@ from src.db.queries import (
     get_pending_task_reminders,
     get_quarter_summary,
     get_recurring_tasks_due,
+    get_synced_todoist_ids,
     get_today_tasks,
     get_unclosed_tasks,
     get_user_projects,
@@ -41,6 +43,7 @@ from src.db.queries import (
     get_week_summary,
     mark_obsidian_reminder_sent,
     mark_reminder_sent,
+    mark_todoist_synced,
     spawn_recurring_task,
 )
 from src.bots.master.prompts import AUDIT_PROMPT, EVENING_REVIEW_HEADER, MASTER_SYSTEM, QUARTERLY_AUDIT_PROMPT, VISION_CONTEXT
@@ -324,7 +327,77 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Todoist auto-sync — каждые 5 минут
+    scheduler.add_job(
+        sync_todoist_inbox,
+        trigger=IntervalTrigger(minutes=5),
+        args=[bot],
+        id="todoist_sync",
+        replace_existing=True,
+    )
+
     return scheduler
+
+
+# === Todoist auto-sync ===
+
+
+async def sync_todoist_inbox(bot: Bot) -> None:
+    """Автоматический импорт новых задач из Todoist Inbox.
+
+    Первый запуск: все существующие задачи помечаются как 'известные' без импорта.
+    Последующие запуски: только новые задачи импортируются + уведомление пользователю.
+    """
+    from src.integrations.todoist import is_configured, get_inbox_tasks
+
+    if not is_configured():
+        return
+
+    try:
+        admins = await get_admin_users()
+        if not admins:
+            return
+        user_id = admins[0]["user_id"]
+
+        tasks = await get_inbox_tasks()
+        if not tasks:
+            return
+
+        known_ids = await get_synced_todoist_ids(user_id)
+
+        # Первый запуск: пометить все текущие задачи как известные без импорта
+        if not known_ids:
+            for t in tasks:
+                tid = t.get("id", "")
+                if tid:
+                    await mark_todoist_synced(tid, user_id, imported=False)
+            logger.info("todoist_initial_sync", known=len(tasks))
+            return
+
+        # Найти новые задачи
+        new_tasks = [t for t in tasks if t.get("id", "") not in known_ids]
+        if not new_tasks:
+            return
+
+        # Импортировать каждую новую задачу
+        imported_names: list[str] = []
+        for t in new_tasks:
+            tid = t.get("id", "")
+            content = t.get("content", "?")
+            if not tid:
+                continue
+            await create_task(user_id=user_id, task_text=content, source="todoist")
+            await mark_todoist_synced(tid, user_id, imported=True)
+            imported_names.append(content)
+
+        if imported_names:
+            lines = "\n".join(f"• {n}" for n in imported_names)
+            text = f"📥 <b>Todoist → Life OS</b> ({len(imported_names)})\n\n{lines}"
+            await bot.send_message(user_id, text)
+            logger.info("todoist_auto_import", count=len(imported_names))
+
+    except Exception:
+        logger.exception("todoist_sync_error")
 
 
 # === Автобэкап PostgreSQL ===
