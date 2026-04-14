@@ -103,6 +103,14 @@ async function loadTasks() {
         document.getElementById("tomorrow-count").textContent = data.tomorrow.length;
         document.getElementById("tomorrow-list").innerHTML = data.tomorrow.map(t => renderTaskItem(t, false)).join("");
     }
+
+    // Inbox
+    const inboxSection = document.getElementById("inbox-section");
+    if (data.inbox && data.inbox.length) {
+        inboxSection.classList.remove("hidden");
+        document.getElementById("inbox-count").textContent = data.inbox.length;
+        document.getElementById("inbox-list").innerHTML = data.inbox.map(t => renderTaskItem(t, false)).join("");
+    }
 }
 
 function renderTaskItem(t, isOverdue) {
@@ -166,6 +174,13 @@ async function toggleTask(taskId, complete) {
 function toggleTomorrow() {
     const list = document.getElementById("tomorrow-list");
     const icon = document.getElementById("tomorrow-toggle");
+    list.classList.toggle("collapsed");
+    icon.textContent = list.classList.contains("collapsed") ? "▼" : "▲";
+}
+
+function toggleInbox() {
+    const list = document.getElementById("inbox-list");
+    const icon = document.getElementById("inbox-toggle");
     list.classList.toggle("collapsed");
     icon.textContent = list.classList.contains("collapsed") ? "▼" : "▲";
 }
