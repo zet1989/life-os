@@ -390,7 +390,7 @@ async def mode_advisor(message: Message, db_user: dict) -> None:
 
     # 4. Бюджетные лимиты
     from src.db.queries import get_project
-    proj = await get_project(project_id)
+    proj = await get_project(project_id, user_id=user_id)
     limits = (proj.get("metadata") or {}).get("limits", {})
 
     # Формируем данные для AI
@@ -603,7 +603,7 @@ async def cmd_budget(message: Message, db_user: dict) -> None:
 
     # Лимиты из metadata
     from src.db.queries import get_project
-    proj = await get_project(project_id)
+    proj = await get_project(project_id, user_id=user_id)
     limits = (proj.get("metadata") or {}).get("limits", {})
 
     # Факт за текущий месяц
@@ -725,7 +725,7 @@ async def cmd_forecast(message: Message, db_user: dict) -> None:
 
     # Сравнение с бюджетными лимитами
     from src.db.queries import get_project
-    proj = await get_project(project_id)
+    proj = await get_project(project_id, user_id=message.from_user.id)
     limits = (proj.get("metadata") or {}).get("limits", {})
     if limits:
         total_limit = sum(limits.values())
@@ -888,7 +888,7 @@ async def _attach_finance(callback: CallbackQuery, user_id: int, project_id: int
             f"Описание: {parsed.get('description', '—')}"
         )
         # Проверка лимитов
-        limit_warning = await _check_budget_limit(project_id, parsed.get("category", ""))
+        limit_warning = await _check_budget_limit(project_id, parsed.get("category", ""), user_id=user_id)
         if limit_warning:
             confirm += f"\n\n{limit_warning}"
 
@@ -906,7 +906,7 @@ async def _attach_finance(callback: CallbackQuery, user_id: int, project_id: int
 # === Отчёт за период (SQL only) ===
 
 async def _send_report(message: Message, project_id: int, project_name: str = "Семейный бюджет") -> None:
-    summary = await get_finance_summary(project_id)
+    summary = await get_finance_summary(project_id, user_id=message.from_user.id)
 
     if not summary:
         await message.answer(
@@ -952,7 +952,7 @@ async def _send_report(message: Message, project_id: int, project_name: str = "�
 # === Топ категорий (SQL only) ===
 
 async def _send_categories(message: Message, project_id: int) -> None:
-    summary = await get_finance_summary(project_id)
+    summary = await get_finance_summary(project_id, user_id=message.from_user.id)
 
     if not summary:
         await message.answer("📈 Пока нет данных.", reply_markup=main_keyboard())
@@ -986,14 +986,14 @@ async def _send_categories(message: Message, project_id: int) -> None:
 
 # === Проверка бюджетных лимитов ===
 
-async def _check_budget_limit(project_id: int, category: str) -> str | None:
+async def _check_budget_limit(project_id: int, category: str, user_id: int | None = None) -> str | None:
     """Проверить, не превышен ли лимит по категории.
 
     Лимиты хранятся в projects.metadata.limits: {"продукты": 40000, ...}
     """
     from src.db.queries import get_project
 
-    proj = await get_project(project_id)
+    proj = await get_project(project_id, user_id=user_id)
     if not proj:
         return None
 
@@ -1003,7 +1003,7 @@ async def _check_budget_limit(project_id: int, category: str) -> str | None:
         return None
 
     # Текущая сумма расходов по категории (за текущий месяц приблизительно — весь период)
-    summary = await get_finance_summary(project_id)
+    summary = await get_finance_summary(project_id, user_id=user_id)
     current = 0.0
     for row in summary:
         if row.get("transaction_type") == "expense" and row.get("category") == category:
@@ -1058,7 +1058,7 @@ async def handle_photo(message: Message, bot: Bot, db_user: dict) -> None:
             f"Категория: {parsed.get('category', '—')}\n"
             f"Магазин: {parsed.get('shop', '—')}"
         )
-        limit_warning = await _check_budget_limit(project_id, parsed.get("category", ""))
+        limit_warning = await _check_budget_limit(project_id, parsed.get("category", ""), user_id=user_id)
         if limit_warning:
             confirm += f"\n\n{limit_warning}"
         await processing.edit_text(confirm)
@@ -1227,7 +1227,7 @@ async def _attach_finance_direct(
             f"Категория: {parsed.get('category', '—')}\n"
             f"Описание: {parsed.get('description', '—')}"
         )
-        limit_warning = await _check_budget_limit(project_id, parsed.get("category", ""))
+        limit_warning = await _check_budget_limit(project_id, parsed.get("category", ""), user_id=user_id)
         if limit_warning:
             confirm += f"\n\n{limit_warning}"
         await message.answer(confirm, reply_markup=main_keyboard())

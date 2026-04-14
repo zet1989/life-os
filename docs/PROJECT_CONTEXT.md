@@ -403,6 +403,25 @@ API_MONTHLY_LIMIT_USD=20.0
 
 ## 12. Changelog (последние изменения)
 
+### 15 апреля 2026 — Security Audit: ACL + SectionFilter hardening
+
+- **Проблема:** жена и партнёр теоретически могли получить доступ к чужим данным:
+  1. `SectionFilter` был только на `router.message`, но НЕ на `router.callback_query` — через crafted callback_data жена могла вызвать обработчики master/psychology/business
+  2. SQL-функции `get_project()`, `get_project_by_name()`, `get_finance_summary()`, `get_project_events()`, `get_goal()` не проверяли owner_id/collaborators
+- **Решение:**
+  - `src/main.py` — добавлен `router.callback_query.filter(SectionFilter(...))` для ВСЕХ 8 секций
+  - `src/db/queries.py` — 5 функций получили optional `user_id` параметр:
+    - `get_project(project_id, user_id)` → проверяет `owner_id = $2 OR $2 = ANY(collaborators)`
+    - `get_project_by_name(name, user_id)` → аналогично
+    - `get_finance_summary(project_id, user_id)` → проверяет доступ к проекту
+    - `get_project_events(project_id, user_id)` → проверяет доступ к проекту
+    - `get_goal(goal_id, user_id)` → проверяет `user_id` владельца
+  - `src/bots/family/handlers.py` — все вызовы `get_project()`, `get_finance_summary()`, `_check_budget_limit()` передают `user_id`
+  - `src/bots/health/handlers.py` — `get_goal()` передаёт `user_id`
+  - `src/bots/partner/handlers.py` — `get_finance_summary()` передаёт `user_id`
+  - `src/bots/psychology/handlers.py` — `get_goal()` передаёт `user_id`
+- **Файлы:** `src/main.py`, `src/db/queries.py`, `src/bots/family/handlers.py`, `src/bots/health/handlers.py`, `src/bots/partner/handlers.py`, `src/bots/psychology/handlers.py`
+
 ### 14 апреля 2026 — Todoist auto-sync (фоновый импорт новых задач)
 
 - **Проблема:** пользователь хочет добавить задачу в Todoist на телефоне — и она автоматически появляется в боте. Ранее требовалось заходить в `/todoist` и вручную импортировать.

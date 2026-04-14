@@ -295,8 +295,18 @@ async def get_recent_finances(user_id: int, project_id: int | None = None, limit
     return [dict(r) for r in rows]
 
 
-async def get_finance_summary(project_id: int) -> list[dict]:
-    """Сводка расходов/доходов по категориям для проекта (SQL only)."""
+async def get_finance_summary(project_id: int, user_id: int | None = None) -> list[dict]:
+    """Сводка расходов/доходов по категориям для проекта (SQL only).
+
+    Если user_id задан — проверить, что пользователь имеет доступ к проекту.
+    """
+    if user_id is not None:
+        proj = await get_pool().fetchrow(
+            "SELECT 1 FROM projects WHERE project_id = $1 AND (owner_id = $2 OR $2 = ANY(collaborators))",
+            project_id, user_id,
+        )
+        if not proj:
+            return []
     rows = await get_pool().fetch(
         """SELECT transaction_type, category, SUM(amount)::numeric(12,2) AS total
            FROM finances WHERE project_id = $1
@@ -354,8 +364,15 @@ async def get_monthly_totals(project_id: int, months: int = 6) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def get_project_events(project_id: int, limit: int = 10) -> list[dict]:
-    """Последние события проекта."""
+async def get_project_events(project_id: int, limit: int = 10, user_id: int | None = None) -> list[dict]:
+    """Последние события проекта. Если user_id задан — проверить доступ."""
+    if user_id is not None:
+        proj = await get_pool().fetchrow(
+            "SELECT 1 FROM projects WHERE project_id = $1 AND (owner_id = $2 OR $2 = ANY(collaborators))",
+            project_id, user_id,
+        )
+        if not proj:
+            return []
     rows = await get_pool().fetch(
         """SELECT * FROM events
            WHERE project_id = $1
@@ -405,9 +422,14 @@ async def update_goal(goal_id: int, user_id: int, **kwargs: Any) -> None:
     await get_pool().execute(sql, *vals)
 
 
-async def get_goal(goal_id: int) -> dict | None:
-    """Получить цель по ID."""
-    row = await get_pool().fetchrow("SELECT * FROM goals WHERE id = $1", goal_id)
+async def get_goal(goal_id: int, user_id: int | None = None) -> dict | None:
+    """Получить цель по ID. Если user_id задан — проверить владельца."""
+    if user_id is not None:
+        row = await get_pool().fetchrow(
+            "SELECT * FROM goals WHERE id = $1 AND user_id = $2", goal_id, user_id,
+        )
+    else:
+        row = await get_pool().fetchrow("SELECT * FROM goals WHERE id = $1", goal_id)
     return dict(row) if row else None
 
 
@@ -504,18 +526,33 @@ async def get_accessible_projects(user_id: int, project_type: str | None = None)
     return [dict(r) for r in rows]
 
 
-async def get_project(project_id: int) -> dict | None:
-    """Получить проект по ID."""
-    row = await get_pool().fetchrow("SELECT * FROM projects WHERE project_id = $1", project_id)
+async def get_project(project_id: int, user_id: int | None = None) -> dict | None:
+    """Получить проект по ID. Если user_id задан — проверить доступ (owner или collaborator)."""
+    if user_id is not None:
+        row = await get_pool().fetchrow(
+            "SELECT * FROM projects WHERE project_id = $1 AND (owner_id = $2 OR $2 = ANY(collaborators))",
+            project_id, user_id,
+        )
+    else:
+        row = await get_pool().fetchrow("SELECT * FROM projects WHERE project_id = $1", project_id)
     return dict(row) if row else None
 
 
-async def get_project_by_name(name: str) -> dict | None:
-    """Получить активный проект по имени (для маппинга Obsidian → project_id)."""
-    row = await get_pool().fetchrow(
-        "SELECT * FROM projects WHERE LOWER(name) = LOWER($1) AND status = 'active' LIMIT 1",
-        name,
-    )
+async def get_project_by_name(name: str, user_id: int | None = None) -> dict | None:
+    """Получить активный проект по имени. Если user_id задан — проверить доступ."""
+    if user_id is not None:
+        row = await get_pool().fetchrow(
+            """SELECT * FROM projects
+               WHERE LOWER(name) = LOWER($1) AND status = 'active'
+                 AND (owner_id = $2 OR $2 = ANY(collaborators))
+               LIMIT 1""",
+            name, user_id,
+        )
+    else:
+        row = await get_pool().fetchrow(
+            "SELECT * FROM projects WHERE LOWER(name) = LOWER($1) AND status = 'active' LIMIT 1",
+            name,
+        )
     return dict(row) if row else None
 
 

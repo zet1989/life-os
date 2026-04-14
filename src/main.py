@@ -63,6 +63,7 @@ def _collect_unified() -> dict:
     from src.bots.health.handlers import router as health_router, watch_router
     from src.bots.health.scheduler import setup_scheduler as health_scheduler
     health_router.message.filter(SectionFilter("health"))
+    health_router.callback_query.filter(SectionFilter("health"))
     routers.append(watch_router)   # watch_router БЕЗ SectionFilter — /watch_connect из любой секции
     routers.append(health_router)
     scheduler_factories.append(health_scheduler)
@@ -71,6 +72,7 @@ def _collect_unified() -> dict:
     from src.bots.assets.handlers import router as assets_router
     from src.bots.assets.scheduler import setup_scheduler as assets_scheduler
     assets_router.message.filter(SectionFilter("assets"))
+    assets_router.callback_query.filter(SectionFilter("assets"))
     routers.append(assets_router)
     scheduler_factories.append(assets_scheduler)
 
@@ -78,28 +80,33 @@ def _collect_unified() -> dict:
     from src.bots.business.handlers import router as business_router
     from src.bots.business.scheduler import setup_scheduler as business_scheduler
     business_router.message.filter(SectionFilter("business"))
+    business_router.callback_query.filter(SectionFilter("business"))
     routers.append(business_router)
     scheduler_factories.append(business_scheduler)
 
     # Partner
     from src.bots.partner.handlers import router as partner_router
     partner_router.message.filter(SectionFilter("partner"))
+    partner_router.callback_query.filter(SectionFilter("partner"))
     routers.append(partner_router)
 
     # Mentor
     from src.bots.mentor.handlers import router as mentor_router
     mentor_router.message.filter(SectionFilter("mentor"))
+    mentor_router.callback_query.filter(SectionFilter("mentor"))
     routers.append(mentor_router)
 
     # Family
     from src.bots.family.handlers import router as family_router
     family_router.message.filter(SectionFilter("family"))
+    family_router.callback_query.filter(SectionFilter("family"))
     routers.append(family_router)
 
     # Psychology
     from src.bots.psychology.handlers import router as psychology_router
     from src.bots.psychology.scheduler import setup_scheduler as psychology_scheduler
     psychology_router.message.filter(SectionFilter("psychology"))
+    psychology_router.callback_query.filter(SectionFilter("psychology"))
     routers.append(psychology_router)
     scheduler_factories.append(psychology_scheduler)
 
@@ -107,6 +114,7 @@ def _collect_unified() -> dict:
     from src.bots.master.handlers import router as master_router
     from src.bots.master.scheduler import setup_scheduler as master_scheduler
     master_router.message.filter(SectionFilter("master"))
+    master_router.callback_query.filter(SectionFilter("master"))
     routers.append(master_router)
     scheduler_factories.append(master_scheduler)
 

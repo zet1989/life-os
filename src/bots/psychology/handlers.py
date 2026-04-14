@@ -367,7 +367,7 @@ async def cb_habit(callback: CallbackQuery) -> None:
     # Получаем привычку
     from src.db.queries import get_goal, get_recent_events
 
-    goal = await get_goal(goal_id)
+    goal = await get_goal(goal_id, user_id=user_id)
     habit_title = goal.get("title", "привычка") if goal else "привычка"
 
     # Считаем серию (streak) — сколько подряд success

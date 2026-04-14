@@ -667,7 +667,7 @@ async def cb_medication(callback: CallbackQuery) -> None:
 
     from src.db.queries import get_goal
 
-    goal = await get_goal(goal_id)
+    goal = await get_goal(goal_id, user_id=user_id)
     med_name = goal.get("title", "лекарство") if goal else "лекарство"
 
     event_type = "medication_taken" if action == "taken" else "medication_skipped"

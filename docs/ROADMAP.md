@@ -137,6 +137,13 @@
 - [ ] Unit-тесты (pytest, минимум 60% coverage)
 - [ ] Staging-окружение для тестов перед продакшеном
 
+### Безопасность и ACL
+
+- [x] SectionFilter на callback_query — блокировка чужих секций через crafted callback_data
+- [x] SQL ACL: `get_project()`, `get_project_by_name()`, `get_finance_summary()`, `get_project_events()` — проверка owner_id/collaborators
+- [x] SQL ACL: `get_goal()` — проверка user_id владельца
+- [x] Все вызовы в family/health/partner передают user_id для SQL-проверки
+
 ### Telegram UX
 
 - [x] Голосовые ответы AI (TTS через edge-tts, /voice toggle)

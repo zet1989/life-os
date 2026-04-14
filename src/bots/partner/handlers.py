@@ -342,7 +342,7 @@ async def _attach_finance(callback: CallbackQuery, user_id: int, project_id: int
 
 async def _send_report(callback: CallbackQuery, project_id: int) -> None:
     """Финансовый отчёт — строго через SQL."""
-    summary = await get_finance_summary(project_id)
+    summary = await get_finance_summary(project_id, user_id=callback.from_user.id)
 
     if not summary:
         await callback.answer("Нет финансовых данных")
