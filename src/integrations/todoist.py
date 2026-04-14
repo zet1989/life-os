@@ -44,20 +44,34 @@ async def get_inbox_project_id() -> str | None:
 
 
 async def get_tasks(project_id: str | None = None) -> list[dict]:
-    """Получить активные задачи (все или по проекту)."""
+    """Получить активные задачи (все или по проекту).
+
+    API v1 игнорирует project_id как query-param, поэтому
+    получаем все задачи (с пагинацией) и фильтруем клиентски.
+    """
     try:
-        params: dict[str, str] = {}
-        if project_id:
-            params["project_id"] = project_id
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{BASE_URL}/tasks", headers=_headers(), params=params,
-            ) as resp:
-                if resp.status == 200:
+        all_tasks: list[dict] = []
+        cursor: str | None = None
+        for _ in range(20):  # safety limit
+            params: dict[str, str] = {}
+            if cursor:
+                params["cursor"] = cursor
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{BASE_URL}/tasks", headers=_headers(), params=params,
+                ) as resp:
+                    if resp.status != 200:
+                        logger.warning("todoist_get_tasks_failed", status=resp.status)
+                        break
                     data = await resp.json()
-                    return data.get("results", [])
-                logger.warning("todoist_get_tasks_failed", status=resp.status)
-                return []
+                    all_tasks.extend(data.get("results", []))
+                    cursor = data.get("next_cursor")
+                    if not cursor:
+                        break
+
+        if project_id:
+            return [t for t in all_tasks if t.get("project_id") == project_id]
+        return all_tasks
     except Exception:
         logger.exception("todoist_get_tasks_error")
         return []
