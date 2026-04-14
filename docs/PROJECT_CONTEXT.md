@@ -403,6 +403,19 @@ API_MONTHLY_LIMIT_USD=20.0
 
 ## 12. Changelog (последние изменения)
 
+### 14 апреля 2026 — Todoist auto-sync (фоновый импорт новых задач)
+
+- **Проблема:** пользователь хочет добавить задачу в Todoist на телефоне — и она автоматически появляется в боте. Ранее требовалось заходить в `/todoist` и вручную импортировать.
+- **Решение:** фоновый планировщик каждые 5 мин проверяет Todoist Inbox через REST API v1. Новые задачи автоматически импортируются в Life OS (source='todoist') с уведомлением.
+- **Первый запуск:** все текущие задачи помечаются как «известные» БЕЗ импорта (чтобы не тащить старый хлам). Только новые задачи будут импортированы.
+- **Изменения:**
+  - `sql/008_todoist_sync.sql` — таблица `todoist_synced` (todoist_id, user_id, imported, synced_at)
+  - `src/db/queries.py` — функции `get_synced_todoist_ids()`, `mark_todoist_synced()`
+  - `src/bots/master/scheduler.py` — функция `sync_todoist_inbox()` + регистрация в планировщике (IntervalTrigger 5 мин)
+  - `src/bots/master/handlers.py` — `/todoist` теперь фильтрует уже импортированные, ручной импорт/close помечает synced
+  - `src/integrations/todoist.py` — удалена нерабочая `get_user_info()`, исправлен `get_inbox_project_id()` (REST вместо Sync API)
+- **Файлы:** `sql/008_todoist_sync.sql`, `src/db/queries.py`, `src/bots/master/scheduler.py`, `src/bots/master/handlers.py`, `src/integrations/todoist.py`
+
 ### 14 апреля 2026 — Todoist интеграция + очистка watch_stale
 
 - **Todoist:**
