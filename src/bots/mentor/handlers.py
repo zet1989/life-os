@@ -432,6 +432,10 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
 async def handle_text(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     text = message.text or ""
+    try:
+        await message.bot.send_chat_action(user_id, "typing")  # type: ignore[union-attr]
+    except Exception:
+        pass
     await _process_input(message, user_id, text)
 
 

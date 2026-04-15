@@ -403,6 +403,22 @@ API_MONTHLY_LIMIT_USD=20.0
 
 ## 12. Changelog (последние изменения)
 
+### 20 апреля 2026 — Performance: typing indicator во всех ботах + async embeddings
+
+- **Проблема:** бот не отвечал 5–30 сек без какого-либо визуального фидбека; `store_event_embedding` блокировал ответ синхронным API-вызовом перед LLM.
+- **Решение 1:** добавлен `await message.bot.send_chat_action(user_id, "typing")` в `handle_text` всех 8 ботов (master, health, business, psychology, partner, mentor, family, assets).
+- **Решение 2:** `store_event_embedding` перенесён в `asyncio.create_task` (fire-and-forget) в master/handlers.py — больше не блокирует ответ.
+- **Решение 3:** добавлен `import asyncio` в master/handlers.py.
+- **Файлы:** `src/bots/master/handlers.py`, `src/bots/health/handlers.py`, `src/bots/business/handlers.py`, `src/bots/psychology/handlers.py`, `src/bots/partner/handlers.py`, `src/bots/mentor/handlers.py`, `src/bots/family/handlers.py`, `src/bots/assets/handlers.py`
+
+### 15 апреля 2026 — Фикс таймера + удаление итогов дня
+
+- **Проблема 1:** кнопка «Указать время» в утреннем уведомлении ничего не делала — callback `wt:start_custom` / `wt:stop_custom` блокировался `SectionFilter("business")`, т.к. пользователь не был в секции business.
+- **Решение 1:** выделен `timer_router` (без SectionFilter) для `wt:*` callbacks, подключён в `main.py` перед `business_router` (аналог `watch_router`).
+- **Проблема 2:** нежелательное уведомление «🌙 Итоги дня» каждый день в 21:00.
+- **Решение 2:** удалён job `evening_review` из `setup_scheduler` в master/scheduler.py.
+- **Файлы:** `src/bots/business/handlers.py`, `src/main.py`, `src/bots/master/scheduler.py`
+
 ### 15 апреля 2026 — Security Audit: ACL + SectionFilter hardening
 
 - **Проблема:** жена и партнёр теоретически могли получить доступ к чужим данным:

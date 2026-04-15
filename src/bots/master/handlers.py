@@ -6,6 +6,7 @@
 Управление промптами и моделями.
 """
 
+import asyncio
 import calendar as cal_module
 import json
 from datetime import datetime, timedelta
@@ -2310,6 +2311,11 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
 async def handle_text(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     text = message.text or ""
+    # Показываем индикатор "печатает" сразу, до тяжёлых операций
+    try:
+        await message.bot.send_chat_action(user_id, "typing")  # type: ignore[union-attr]
+    except Exception:
+        pass
     await _process_input(message, user_id, text)
 
 
@@ -2386,9 +2392,15 @@ async def _process_input(message: Message, user_id: int, text: str) -> None:
             bot_source=BOT_SOURCE,
             raw_text=text,
         )
-        await store_event_embedding(event["id"], text, user_id, BOT_SOURCE)
+        # Embedding в фон — не блокируем ответ пользователю
+        asyncio.create_task(store_event_embedding(event["id"], text, user_id, BOT_SOURCE))
 
     # Проактивный режим: сверяем с целями
+    # Показываем typing — LLM может отвечать 5-30 сек
+    try:
+        await message.bot.send_chat_action(user_id, "typing")  # type: ignore[union-attr]
+    except Exception:
+        pass
     system = await _system_with_vision(user_id)
     messages = await build_messages(
         user_id=user_id,

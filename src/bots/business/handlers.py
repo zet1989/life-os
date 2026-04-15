@@ -57,6 +57,7 @@ from src.bots.hub.keyboard import Section, set_current_section
 
 logger = structlog.get_logger()
 router = Router()
+timer_router = Router()  # без SectionFilter — доступен из любой секции (нотификации планировщика)
 
 BOT_SOURCE = "business"
 
@@ -491,8 +492,9 @@ async def cmd_work_stop(message: Message, db_user: dict) -> None:
 
 
 # --- Inline callback-и для кнопок в уведомлениях ---
+# Используют timer_router (без SectionFilter) — работают из любой секции
 
-@router.callback_query(F.data == "wt:start_now")
+@timer_router.callback_query(F.data == "wt:start_now")
 async def cb_work_start_now(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     if not _is_timer_allowed(user_id):
@@ -509,7 +511,7 @@ async def cb_work_start_now(callback: CallbackQuery) -> None:
         )
 
 
-@router.callback_query(F.data == "wt:start_custom")
+@timer_router.callback_query(F.data == "wt:start_custom")
 async def cb_work_start_custom(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     if not _is_timer_allowed(user_id):
@@ -525,7 +527,7 @@ async def cb_work_start_custom(callback: CallbackQuery) -> None:
         )
 
 
-@router.callback_query(F.data == "wt:stop_now")
+@timer_router.callback_query(F.data == "wt:stop_now")
 async def cb_work_stop_now(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     if not _is_timer_allowed(user_id):
@@ -542,7 +544,7 @@ async def cb_work_stop_now(callback: CallbackQuery) -> None:
         )
 
 
-@router.callback_query(F.data == "wt:stop_custom")
+@timer_router.callback_query(F.data == "wt:stop_custom")
 async def cb_work_stop_custom(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     if not _is_timer_allowed(user_id):
@@ -638,6 +640,10 @@ async def handle_voice(message: Message, bot: Bot, db_user: dict) -> None:
 async def handle_text(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     text = message.text or ""
+    try:
+        await message.bot.send_chat_action(user_id, "typing")  # type: ignore[union-attr]
+    except Exception:
+        pass
     await _process_input(message, user_id, text)
 
 

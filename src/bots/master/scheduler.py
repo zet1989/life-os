@@ -258,15 +258,6 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # Вечерний обзор — 21:00 каждый день
-    scheduler.add_job(
-        send_evening_review,
-        trigger=CronTrigger(hour=21, minute=0, timezone=MSK),
-        args=[bot],
-        id="evening_review",
-        replace_existing=True,
-    )
-
     # Напоминания о задачах — каждую минуту
     scheduler.add_job(
         send_task_reminders,

@@ -77,8 +77,9 @@ def _collect_unified() -> dict:
     scheduler_factories.append(assets_scheduler)
 
     # Business
-    from src.bots.business.handlers import router as business_router
+    from src.bots.business.handlers import router as business_router, timer_router as business_timer_router
     from src.bots.business.scheduler import setup_scheduler as business_scheduler
+    routers.append(business_timer_router)  # timer_router БЕЗ SectionFilter — wt:* callbacks из нотификаций
     business_router.message.filter(SectionFilter("business"))
     business_router.callback_query.filter(SectionFilter("business"))
     routers.append(business_router)

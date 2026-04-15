@@ -951,6 +951,10 @@ async def handle_text(message: Message, db_user: dict) -> None:
 
     mode = get_user_mode(user_id)
     logger.info("health.handle_text", user_id=user_id, mode=mode.value, text_len=len(text))
+    try:
+        await message.bot.send_chat_action(user_id, "typing")  # type: ignore[union-attr]
+    except Exception:
+        pass
     if mode == Mode.WORKOUT:
         await _process_workout(message, user_id, text)
     elif mode == Mode.DOCTOR:

@@ -291,6 +291,10 @@ async def handle_text(message: Message, db_user: dict) -> None:
     user_id = message.from_user.id  # type: ignore[union-attr]
     text = message.text or ""
     mode = get_user_mode(user_id)
+    try:
+        await message.bot.send_chat_action(user_id, "typing")  # type: ignore[union-attr]
+    except Exception:
+        pass
     await _process_text(message, user_id, text, mode)
 
 

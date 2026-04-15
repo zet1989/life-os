@@ -663,6 +663,10 @@ async def handle_text(message: Message, db_user: dict) -> None:
         await _process_gratitude(message, user_id, text)
         return
 
+    try:
+        await message.bot.send_chat_action(user_id, "typing")  # type: ignore[union-attr]
+    except Exception:
+        pass
     await _process_diary(message, user_id, text)
 
 
