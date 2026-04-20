@@ -5,7 +5,7 @@
 Кросс-бот контекст: психолог видит данные ВСЕХ ботов Life OS.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -370,24 +370,34 @@ async def cb_habit(callback: CallbackQuery) -> None:
     goal = await get_goal(goal_id, user_id=user_id)
     habit_title = goal.get("title", "привычка") if goal else "привычка"
 
-    # Считаем серию (streak) — сколько подряд success
+    # Считаем серию (streak) — по календарным дням подряд
+    MSK = ZoneInfo("Europe/Moscow")
     recent_evts = await get_recent_events(
         user_id=user_id,
         event_type="habit",
         bot_source=BOT_SOURCE,
-        limit=30,
+        limit=60,
     )
 
-    streak = 0
+    # Собираем уникальные даты success для этого goal_id
+    success_dates: set = set()
     for ev in recent_evts:
         jd = ev.get("json_data") or {}
         if jd.get("goal_id") == goal_id and jd.get("status") == "success":
-            streak += 1
-        elif jd.get("goal_id") == goal_id:
-            break
+            ts = ev.get("timestamp")
+            if ts:
+                success_dates.add(ts.astimezone(MSK).date())
 
+    today = datetime.now(MSK).date()
     if status == "success":
+        success_dates.add(today)
+
+    # Считаем подряд идущие дни назад от сегодня
+    streak = 0
+    check_date = today
+    while check_date in success_dates:
         streak += 1
+        check_date -= timedelta(days=1)
 
     # Сохраняем событие
     event = await create_event(

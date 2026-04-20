@@ -393,6 +393,23 @@ async def get_active_goals(user_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_weekly_habit_progress(user_id: int, goal_id: int) -> int:
+    """Процент выполнения привычки за текущую неделю (дни с success / 7 * 100)."""
+    row = await get_pool().fetchrow(
+        """SELECT COUNT(DISTINCT (timestamp AT TIME ZONE 'Europe/Moscow')::date) AS days
+           FROM events
+           WHERE user_id = $1
+             AND event_type = 'habit'
+             AND (json_data->>'goal_id')::int = $2
+             AND json_data->>'status' = 'success'
+             AND timestamp >= date_trunc('week', NOW() AT TIME ZONE 'Europe/Moscow')
+                              AT TIME ZONE 'Europe/Moscow'""",
+        user_id, goal_id,
+    )
+    days = row["days"] if row else 0
+    return min(100, round(days / 7 * 100))
+
+
 async def create_goal(
     user_id: int,
     goal_type: str,
@@ -804,12 +821,12 @@ async def get_monthly_habit_stats(user_id: int, year: int, month: int) -> list[d
     rows = await get_pool().fetch(
         """SELECT
              g.title,
-             COUNT(CASE WHEN json_data->>'status' = 'done' THEN 1 END) AS done_count,
+             COUNT(CASE WHEN json_data->>'status' = 'success' THEN 1 END) AS done_count,
              COUNT(*) AS total_count
            FROM events e
            JOIN goals g ON g.id = (e.json_data->>'goal_id')::int
            WHERE e.user_id = $1
-             AND e.event_type = 'habit_check'
+             AND e.event_type = 'habit'
              AND EXTRACT(YEAR FROM e.timestamp) = $2
              AND EXTRACT(MONTH FROM e.timestamp) = $3
            GROUP BY g.title

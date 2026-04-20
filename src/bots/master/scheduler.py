@@ -28,6 +28,7 @@ from src.db.queries import (
     create_task,
     get_active_goals,
     get_admin_users,
+    get_weekly_habit_progress,
     get_completed_today_count,
     get_finance_summary,
     get_obsidian_pending_reminders,
@@ -668,7 +669,10 @@ async def _send_weekly_to_user(bot: Bot, user_id: int) -> None:
         if goals:
             text += "🎯 <b>Цели:</b>\n"
             for g in goals:
-                pct = g.get("progress_pct", 0)
+                if g["type"] == "habit_target":
+                    pct = await get_weekly_habit_progress(user_id, g["id"])
+                else:
+                    pct = g.get("progress_pct", 0)
                 filled = round(pct / 100 * 8)
                 bar = "▓" * filled + "░" * (8 - filled)
                 emoji = {"dream": "🌟", "yearly_goal": "🎯", "habit_target": "✅"}.get(g["type"], "📌")
